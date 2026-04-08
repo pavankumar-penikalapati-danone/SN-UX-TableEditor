@@ -1,0 +1,20 @@
+# This is a Databricks asset bundle definition for test-db-project.
+# The Databricks extension requires databricks.yml configuration file.
+# See https://docs.databricks.com/dev-tools/bundles/index.html for documentation.
+
+bundle:
+  name: test-db-project
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adb-7744086575777980.0.azuredatabricks.net
+      file_path: /Workspace/Users/pavankumar.penikalapati@external.danone.com/sn-ux-db-table-editor
+      
+  ## Optionally, there could be 'staging' or 'prod' targets here.
+  #
+  # prod:
+  #   workspace:
+  #     host: https://adb-7744086575777980.0.azuredatabricks.net

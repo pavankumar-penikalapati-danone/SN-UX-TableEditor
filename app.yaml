@@ -1,0 +1,106 @@
+command: [
+  "streamlit", 
+  "run",
+  "app/App_Home.py"
+]
+
+env:
+  - name: "DATABRICKS_WAREHOUSE_ID"
+    value: "ac307867a98c87a7"
+    # valueFrom: "sql-warehouse"
+  - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
+    value: "false"
+
+  - name: APP_TITLE
+    value: "SN UX Table Editor"
+
+  # ── Table FQNs ──────────────────────────────────────────
+  - name: UC_TABLE_FQN
+    value: "onesource_eu_dev_rni.ux_sn_global.ux_sn_conso_master_table_dbapp"
+
+  - name: AUDIT_TABLE_FQN
+    value: "onesource_eu_dev_rni.ux_sn_global.ux_sn_conso_master_table_dbapp_audit"
+
+  - name: MAPPING_TABLE_FQN
+    value: "onesource_eu_dev_rni.ux_sn_global.mapping_codes"
+
+  - name: DROPDOWN_TABLE_FQN
+    value: "onesource_eu_dev_rni.ux_sn_global.ux_sn_dropdown_options"
+
+  - name: CATALOG
+    value: "onesource_eu_dev_rni"
+
+  - name: SCHEMA
+    value: "ux_sn_global"
+
+  # ── Pagination & sorting ────────────────────────────────
+  - name: PAGE_SIZE
+    value: "100"
+
+  - name: DEFAULT_SORT_COLUMN
+    value: "row_id"
+
+  - name: DEFAULT_SORT_DIR
+    value: "ascending"
+
+  # ── Column lists (comma-separated) ─────────────────────
+  - name: DISPLAY_COLUMNS
+    value: "row_id,sp_test_id,cl_test_id,match_type,brand_L0,brand_L1,prod_type,flavour_pack,test_country,test_year,zone,CBU,competitor1,competitor2,prod_catL1,retest_year,test_area,prod_status,score_main,cl_pct,test_environment,test_status,cl_pyramid_level,cl_questionnaire,cl_substantiated,branded_flag,prod_catL4,pack,prod_name_pack,test_danoneprod,ingestion_timestamp"
+
+  - name: DML_COLUMNS
+    value: "sp_test_id,cl_test_id,match_type,brand_L0,brand_L1,prod_type,flavour_pack,test_country,test_year,zone,CBU,competitor1,competitor2,prod_catL1,retest_year,test_area,prod_status,score_main,cl_pct,test_environment,test_status,cl_pyramid_level,cl_questionnaire,cl_substantiated,pack,prod_name_pack,test_danoneprod,ingestion_timestamp"
+
+  - name: DROPDOWN_COLS
+    value: "match_type,brand_L1,branded_flag,flavour_pack,prod_type,test_country,zone,prod_catL4,stage,CBU,brand_L0,prod_catL1,prod_catL2,prod_catL3"
+
+  - name: FILTER_COLUMNS
+    value: "test_year,test_country,brand_L0"
+
+  - name: SEQ_GROUP_COLS
+    value: "test_year,test_country,prod_catL1,brand_L0,competitor1,competitor2,pack,prod_name_pack,prod_status,test_danoneprod"
+
+  - name: MANDATORY_UPDATE_COLS
+    value: "test_year,test_country,brand_L0"
+
+  - name: PINNED_COLUMNS
+    value: "row_id,ingestion_timestamp"
+
+  - name: DISABLED_COLUMNS
+    value: "sp_test_id,cl_test_id,ingestion_timestamp"
+
+  # ── Assets ──────────────────────────────────────────────
+  - name: APP_LOGO_IMAGE
+    value: "app/assets/DANONE_LOGO_HORIZONTAL.png"
+
+  - name: APP_LOGO_ICON_IMAGE
+    value: "app/assets/DANONE_LOGO_HORIZONTAL.png"
+
+  - name: APP_LOGO_LINK
+    value: "https://commons.wikimedia.org/wiki/File:DANONE_LOGO_HORIZONTAL.png"
+
+  - name: BULK_TEMPLATE_PATH
+    value: "app/assets/Book.xlsx"
+
+  - name: AUDIT_SUFFIX
+    value: "_audit"
+
+  # ── Admin page settings ──────────────────────────────────
+  - name: EDITOR_USERS
+    value: "pavankumar.penikalapati@external.danone.com,tiago.brito@danone.com,vedant.raghav@external.danone.com"
+
+  - name: ADMIN_USERS
+    value: "pavankumar.penikalapati@external.danone.com,tiago.brito@danone.com,vedant.raghav@external.danone.com"
+
+  - name: ADMIN_COLUMN_ACCESS
+    value: '{"pavankumar.penikalapati@external.danone.com": {"Master Table": ["*"], "Mapping Codes": ["*"], "Dropdown Options": ["*"]}, "tiago.brito@danone.com": {"Master Table": ["*"], "Mapping Codes": ["*"], "Dropdown Options": ["*"]}, "vedant.raghav@external.danone.com": {"Master Table": ["*"], "Mapping Codes": ["*"], "Dropdown Options": ["*"]}}'
+
+  # ── Editor page access control (AAD group) ───────────────
+  - name: EDITOR_GROUP
+    value: "AAD-GAA-WW-RNI-UX-SUP-CONSOMASTER-EXT,AAD-GAA-WW-ONESOURCE-T-RNI-ANL"
+
+  # ── Group-level column editing access ────────────────────
+  # JSON: { "group_name": ["*"] | ["col1","col2",...] }
+  #   ["*"]         = can edit ALL columns (except base DISABLED_COLUMNS)
+  #   ["col1",...]  = can ONLY edit those columns; rest are disabled
+  - name: EDITOR_GROUP_COLUMN_ACCESS
+    value: '{"AAD-GAA-WW-ONESOURCE-T-RNI-ANL": ["*"], "AAD-GAA-WW-RNI-UX-SUP-CONSOMASTER-EXT": ["match_type","brand_L0","brand_L1","prod_type","flavour_pack","test_country","test_year","zone","CBU","competitor1","competitor2","prod_catL1","test_area","prod_status"]}'
