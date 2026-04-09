@@ -14,6 +14,8 @@ import time
 import uuid
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 # ── Import from shared config ────────────────────────────────
@@ -26,8 +28,12 @@ from config import (
     cfg, CA_FILE, HOST, HTTP_PATH,
     to_bold,
     get_user_token, sp_connection, run_query,
+    get_user_identity, ADMIN_USERS,
 )
 from databricks import sql
+
+# Columns kept in data but hidden from display, filters, and sort
+_HIDDEN_DISPLAY_COLS = {"row_id", "ingestion_timestamp", "Unnamed__64", "Unnamed__65", "Unnamed__66", "Unnamed__71", "Unnamed__72", "Unnamed__73"}
 
 
 # ═════════════════════════════════════════════════════════════
@@ -113,6 +119,15 @@ if APP_LOGO_IMAGE:
         icon_image=APP_LOGO_ICON,
         link=APP_LOGO_LINK,
     )
+
+# ── Hide Admin page from sidebar for non-admin users ─────────
+try:
+    _current_user = get_user_identity()
+except Exception:
+    _current_user = ""
+
+if not (_current_user.lower() in ADMIN_USERS if _current_user else False):
+    st.markdown('<style>[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }</style>', unsafe_allow_html=True)
 
 # Initialize fetch-state gate
 if "init_data_fetch" not in st.session_state:
@@ -229,7 +244,6 @@ with tab1:
             st.metric("Columns with Nulls", _cols_with_nulls)
 
         # Profiling table with traffic-light gradient
-        st.subheader("Column Profiling Details")
 
         def _traffic_gradient(val):
             """Smooth RdYlGn_r gradient for Null % column."""
@@ -268,9 +282,55 @@ with tab1:
             ])
             .set_properties(**{"text-align": "center"})
         )
-        st.dataframe(
-            _styled, use_container_width=True, hide_index=True, height=400,
-        )
+
+        # ── Side-by-side: profiling table + pie chart ────────────
+        _tbl_col, _chart_col = st.columns([3, 2])
+
+        with _tbl_col:
+            st.markdown(
+                "<h3 style='font-size:18px; font-weight:600; margin-bottom:0.5rem;'>Column Profiling Details</h3>",
+                unsafe_allow_html=True,
+            )
+            st.dataframe(
+                _styled, use_container_width=True, hide_index=True, height=400,
+            )
+
+        with _chart_col:
+            # Null % distribution pie chart
+            _pie_df = _profile_df[_profile_df["Null Count"] > 0].sort_values(
+                "Null %", ascending=False,
+            )
+            st.markdown(
+                "<h3 style='font-size:18px; font-weight:600; margin-bottom:0.5rem;'>Null Distribution</h3>",
+                unsafe_allow_html=True,
+            )
+            if not _pie_df.empty:
+                _fig_pie = go.Figure(go.Pie(
+                    labels=_pie_df["Column Name"],
+                    values=_pie_df["Null Count"],
+                    hole=0.4,
+                    textinfo="percent",
+                    textposition="inside",
+                    marker=dict(
+                        colors=(px.colors.qualitative.Pastel + px.colors.qualitative.Pastel2)[: len(_pie_df)],
+                    ),
+                    hovertemplate="<b>%{label}</b><br>Null Count: %{value:,}<br>Null %%: %{percent}<extra></extra>",
+                ))
+                _fig_pie.update_layout(
+                    height=400,
+                    margin=dict(t=10, b=10, l=10, r=10),
+                    showlegend=True,
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom", y=-0.25,
+                        xanchor="center", x=0.5,
+                        font=dict(size=11),
+                    ),
+                    font=dict(size=12),
+                )
+                st.plotly_chart(_fig_pie, use_container_width=True)
+            else:
+                st.success("All mandatory columns are fully populated!")
     else:
         st.info(
             "Loading table data from Databricks Unity Catalog..."
@@ -291,12 +351,13 @@ with tab2:
             if FILTER_COLUMNS:
                 st.session_state["filter_col_list"] = [
                     c for c in FILTER_COLUMNS
-                    if c in st.session_state["read_snapshot"].columns
+                    if c in st.session_state["read_snapshot"].columns and c not in _HIDDEN_DISPLAY_COLS
                 ]
             else:
-                st.session_state["filter_col_list"] = list(
-                    st.session_state["read_snapshot"].columns[:3]
-                )
+                st.session_state["filter_col_list"] = [
+                    c for c in st.session_state["read_snapshot"].columns[:3]
+                    if c not in _HIDDEN_DISPLAY_COLS
+                ]
             # Always include sp_test_id filter if present
             if (
                 "sp_test_id" in st.session_state["read_snapshot"].columns
@@ -370,7 +431,7 @@ with tab2:
             with sc1:
                 sort_col = st.selectbox(
                     "Column name",
-                    options=st.session_state["read_snapshot"].columns,
+                    options=[c for c in st.session_state["read_snapshot"].columns if c not in _HIDDEN_DISPLAY_COLS],
                 )
             with sc2:
                 sort_ord = st.selectbox(
@@ -467,8 +528,9 @@ with tab2:
             if c not in column_config:
                 column_config[c] = st.column_config.Column(label=to_bold(c))
 
+        _display_cols = [c for c in st.session_state["sfe_df"].columns if c not in _HIDDEN_DISPLAY_COLS]
         st.dataframe(
-            data=st.session_state["sfe_df"][
+            data=st.session_state["sfe_df"][_display_cols].iloc[
                 st.session_state["start_index"]:st.session_state["end_index"]
             ],
             height=250,
@@ -478,51 +540,49 @@ with tab2:
         )
 
         # Pagination
-        col1, col2, col3 = st.columns([1, 2, 1])
-
-        with col1:
-            left, mid, right = st.columns([1, 2, 1])
-            with mid:
-                prev_clicked = st.button(
-                    "Previous", use_container_width=True,
-                    disabled=st.session_state["page"] <= 1,
-                    key="prev_btn",
-                )
-                if prev_clicked and st.session_state["page"] > 1:
-                    st.session_state["page"] -= 1
-                    st.session_state["start_index"] = (
-                        (st.session_state["page"] - 1) * st.session_state["page_size"]
-                    )
-                    st.session_state["end_index"] = (
-                        st.session_state["start_index"] + st.session_state["page_size"]
-                    )
-                    st.rerun()
-
-        with col2:
+        _pg1 = st.session_state["page"]
+        _tp1 = st.session_state["total_pages"]
+        _ps1 = st.session_state["page_size"]
+        _tr1 = len(st.session_state.get("sfe_df", []))
+        pg_prev, pg_lbl, pg_input, pg_of, pg_next = st.columns(
+            [1, 0.5, 0.6, 2, 1], vertical_alignment="center",
+        )
+        with pg_prev:
+            if st.button("Previous", use_container_width=True,
+                         disabled=_pg1 <= 1, key="prev_btn"):
+                st.session_state["page"] -= 1
+                st.session_state["start_index"] = (st.session_state["page"] - 1) * _ps1
+                st.session_state["end_index"] = st.session_state["start_index"] + _ps1
+                st.rerun()
+        with pg_lbl:
             st.markdown(
-                f"<div style='text-align:center; font-weight:600; margin:0;'>"
-                f"Page {st.session_state['page']} of {st.session_state['total_pages']}"
-                f"</div>",
+                "<div style='text-align:right; font-weight:600; white-space:nowrap;'>Page</div>",
                 unsafe_allow_html=True,
             )
-
-        with col3:
-            left, mid, right = st.columns([1, 2, 1])
-            with mid:
-                next_clicked = st.button(
-                    "Next", use_container_width=True,
-                    disabled=st.session_state["page"] >= st.session_state["total_pages"],
-                    key="next_btn",
-                )
-                if next_clicked and st.session_state["page"] < st.session_state["total_pages"]:
-                    st.session_state["page"] += 1
-                    st.session_state["start_index"] = (
-                        (st.session_state["page"] - 1) * st.session_state["page_size"]
-                    )
-                    st.session_state["end_index"] = (
-                        st.session_state["start_index"] + st.session_state["page_size"]
-                    )
-                    st.rerun()
+        with pg_input:
+            _go1 = st.number_input(
+                "Go to page", min_value=1, max_value=_tp1,
+                value=_pg1, step=1, key="read_go_page_input",
+                label_visibility="collapsed",
+            )
+            if _go1 != _pg1:
+                st.session_state["page"] = _go1
+                st.session_state["start_index"] = (_go1 - 1) * _ps1
+                st.session_state["end_index"] = st.session_state["start_index"] + _ps1
+                st.rerun()
+        with pg_of:
+            st.markdown(
+                f"<div style='text-align:left; font-weight:600; white-space:nowrap;'>"
+                f"of {_tp1} &nbsp;|&nbsp; {_tr1:,} rows</div>",
+                unsafe_allow_html=True,
+            )
+        with pg_next:
+            if st.button("Next", use_container_width=True,
+                         disabled=_pg1 >= _tp1, key="next_btn"):
+                st.session_state["page"] += 1
+                st.session_state["start_index"] = (st.session_state["page"] - 1) * _ps1
+                st.session_state["end_index"] = st.session_state["start_index"] + _ps1
+                st.rerun()
 
     else:
         st.info(

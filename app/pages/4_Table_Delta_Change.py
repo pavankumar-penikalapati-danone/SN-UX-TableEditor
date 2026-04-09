@@ -1,10 +1,12 @@
 import os
 import re
+import certifi
 import pandas as pd
 import streamlit as st
 from databricks import sql
 from databricks.sdk.core import Config
 from dotenv import load_dotenv
+from config import SHARED_CSS, APP_LOGO_IMAGE, APP_LOGO_ICON, APP_LOGO_LINK
 # Convert text to Unicode Mathematical Bold Sans-Serif for visual bold in st.dataframe headers
 def _to_bold(text):
     result = []
@@ -27,143 +29,9 @@ def _bold_col_cfg(df):
 # STREAMLIT SETUP
 # ----------------------------------------
 st.set_page_config(page_title="Delta Version Diff (All Columns)", layout="wide", initial_sidebar_state="expanded")
-st.markdown("""
-<style>
+st.markdown(SHARED_CSS, unsafe_allow_html=True)
 
-    /* ========= MODIFY st.app_header() ========== */
 
-    /* Main header container */
-    [data-testid="stAppHeader"] {
-        height: 1rem !important;         /* reduce height */
-        min-height: 1rem !important;
-        padding: 0.2rem 1rem !important;    /* small padding */
-        background-color: white !important; /* optional */
-        box-shadow: none !important;        /* remove bottom shadow */
-        border-bottom: 1px solid #ddd !important;  /* thin line */
-    }
-
-    /* Header title text */
-    [data-testid="stAppHeader"] h1,
-    [data-testid="stAppHeader"] h2,
-    [data-testid="stAppHeader"] h3 {
-        font-size: 16px !important;          /* smaller title */
-        margin: 0 !important;
-        padding: 0 !important;
-        line-height: 1 !important;
-    }
-
-    /* If header has buttons/icons */
-    [data-testid="stAppHeader"] button {
-        transform: scale(0.85);
-        padding: 2px 4px !important;
-        font-size: 12px !important;
-    }
-
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-
-    /* --------------------------------------------- */
-    /* REDUCE SIDEBAR WIDTH (WORKS IN ALL PAGES)     */
-    /* --------------------------------------------- */
-
-    /* Sidebar container */
-    [data-testid="stSidebar"] {
-        width: 12rem !important;       /* CHOOSE SIZE */
-        min-width: 12rem !important;
-        max-width: 12rem !important;
-    }
-
-    /* Reduce internal padding */
-    [data-testid="stSidebar"] > div:first-child {
-        padding: 0.5rem 0.8rem !important;
-    }
-
-    /* Compact sidebar text */
-    [data-testid="stSidebar"] * {
-        font-size: 13px !important;
-    }
-
-</style>
-""", unsafe_allow_html=True)
-
-# 🔥 Global page layout + font reducer + margins (USE ON ALL PAGES)
-st.markdown("""
-<style>
-
-    /* --------------------------------------------- */
-    /* PAGE MARGINS + TOP SPACING (your requirement) */
-    /* --------------------------------------------- */
-    .block-container {
-        padding-top: 0.5rem !important;     /* top space */
-        padding-left: 2rem !important;    /* left margin */
-        padding-right: 2rem !important;   /* right margin */
-    }
-
-    /* --------------------------------------------- */
-    /* GLOBAL FONT SIZE REDUCER (safe for all pages) */
-    /* --------------------------------------------- */
-    html, body, [class*="css"] {
-        font-size: 14px !important;
-    }
-
-    /* Title (st.title) */
-    h1 {
-        font-size: 28px !important;
-        font-weight: 700 !important;
-        margin-top: 1rem !important;
-        margin-bottom: 0.5rem !important;
-    }
-
-    /* Headers (st.header / h2 / h3 etc.) */
-    h2 {
-        font-size: 20px !important;
-        font-weight: 650 !important;
-    }
-    h3 {
-        font-size: 18px !important;
-        font-weight: 600 !important;
-    }
-    h4 {
-        font-size: 16px !important;
-    }
-
-    /* Tabs */
-    .stTabs [data-baseweb="tab"] {
-        font-size: 14px !important;
-    }
-
-    /* Expander header */
-    .streamlit-expanderHeader {
-        font-size: 12px !important;
-    }
-
-    /* Buttons */
-    .stButton > button {
-        font-size: 13px !important;
-        padding: 4px 10px !important;
-    }
-
-    /* Sidebars */
-    .sidebar .css-1d391kg, .sidebar .css-1n76uvr {
-        font-size: 14px !important;
-    }
-
-    /* DataFrames (table fonts) */
-    .dataframe td, .dataframe th {
-        font-size: 13px !important;
-    }
-
-    /* Compact table rows */
-    .stDataFrame tbody tr td {
-        padding-top: 4px !important;
-        padding-bottom: 4px !important;
-    }
-
-</style>
-""", unsafe_allow_html=True)
 
 st.markdown(
     """
@@ -175,10 +43,26 @@ st.markdown(
 )
 
 st.logo(
-    "app/assets/DANONE_LOGO_HORIZONTAL.png",
-    size="large",
-    icon_image="app/assets/DANONE_LOGO_HORIZONTAL.png",
+    APP_LOGO_IMAGE, size="large",
+    icon_image=APP_LOGO_ICON,
+    link=APP_LOGO_LINK,
 )
+
+# ── Hide Admin page from sidebar for non-admin users ─────────
+_admin_users_env = [u.strip().lower() for u in os.environ.get("ADMIN_USERS", "").split(",") if u.strip()]
+_nav_user = ""
+try:
+    _hdrs = st.context.headers or {}
+    for _k in ("X-Forwarded-Email", "X-Forwarded-Preferred-Username"):
+        _v = _hdrs.get(_k, "").strip()
+        if _v:
+            _nav_user = _v.lower()
+            break
+except Exception:
+    pass
+if _admin_users_env and _nav_user not in _admin_users_env:
+    st.markdown('<style>[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }</style>', unsafe_allow_html=True)
+
 
 def is_running_in_databricks():
     return "DATABRICKS_RUNTIME_VERSION" in os.environ
@@ -188,14 +72,28 @@ if not is_running_in_databricks():
 
 cfg = Config()
 
+_HOST = (cfg.host or "").replace("https://", "").replace("http://", "").rstrip("/")
+_HTTP_PATH = f"/sql/1.0/warehouses/{cfg.warehouse_id}"
+_CA_FILE = certifi.where()
+
+
 def run_sql(query: str) -> pd.DataFrame:
     token = st.context.headers.get("X-Forwarded-Access-Token") if hasattr(st, "context") else None
-    with sql.connect(
-        server_hostname=cfg.host,
-        http_path=f"/sql/1.0/warehouses/{cfg.warehouse_id}",
-        access_token=token if token else None,
-        credentials_provider=None if token else (lambda: cfg.authenticate),
-    ) as conn:
+    if token:
+        conn = sql.connect(
+            server_hostname=_HOST,
+            http_path=_HTTP_PATH,
+            access_token=token,
+            _tls_trusted_ca_file=_CA_FILE,
+            _tls_no_verify=False,
+        )
+    else:
+        conn = sql.connect(
+            server_hostname=cfg.host,
+            http_path=_HTTP_PATH,
+            credentials_provider=lambda: cfg.authenticate,
+        )
+    with conn:
         with conn.cursor() as cur:
             cur.execute(query)
             return cur.fetchall_arrow().to_pandas()
@@ -219,7 +117,7 @@ def q_fqn(fqn: str) -> str:
 # ----------------------------------------
 # DEFAULTS
 # ----------------------------------------
-DEFAULT_TABLE = "onesource_eu_dev_rni.ux_sn_global.ux_sn_conso_master_table_dbapp"
+DEFAULT_TABLE = "onesource_eu_dev_rni.ux_sn_global.ux_sn_conso_master_table_dbapp_clone"
 DEFAULT_PK = "row_id"
 HIDE_OPERATIONS = ["OPTIMIZE"]
 
@@ -424,7 +322,6 @@ if st.session_state.get("delta_diff_computed"):
             _u_df = updated_df[["key_id", "change_type", "column_name", "old_value", "new_value"]]
             st.dataframe(
                 _u_df,
-                height=100,
                 use_container_width=True, hide_index=True,
                 column_config=_bold_col_cfg(_u_df)
             )
@@ -436,7 +333,7 @@ if st.session_state.get("delta_diff_computed"):
             st.info("No inserted rows found.")
         else:
             insert_cols = [c for c in inserted_df.columns if c not in ["column_name", "old_value", "new_value"]]
-            st.dataframe(inserted_df[insert_cols],height=100, use_container_width=True, hide_index=True, column_config=_bold_col_cfg(inserted_df[insert_cols]))
+            st.dataframe(inserted_df[insert_cols],use_container_width=True, hide_index=True, column_config=_bold_col_cfg(inserted_df[insert_cols]))
 
     # DELETES TAB
     with tab3:
@@ -445,12 +342,12 @@ if st.session_state.get("delta_diff_computed"):
             st.info("No deleted rows found.")
         else:
             delete_cols = [c for c in deleted_df.columns if c not in ["column_name", "old_value", "new_value"]]
-            st.dataframe(deleted_df[delete_cols], height=100,use_container_width=True, hide_index=True, column_config=_bold_col_cfg(deleted_df[delete_cols]))
+            st.dataframe(deleted_df[delete_cols], use_container_width=True, hide_index=True, column_config=_bold_col_cfg(deleted_df[delete_cols]))
 
     # ALL TAB
     with tab4:
         st.markdown("### 📘 All Change Types Combined")
-        st.dataframe(final_df,height=100, use_container_width=True, hide_index=True, column_config=_bold_col_cfg(final_df))
+        st.dataframe(final_df,use_container_width=True, hide_index=True, column_config=_bold_col_cfg(final_df))
 
     # ----------------------------------------
     # DOWNLOAD
