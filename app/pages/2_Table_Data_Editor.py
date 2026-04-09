@@ -125,6 +125,16 @@ if "edit_data" in st.session_state:
         if st.session_state.get("edit_init_data_fetch"):
             st.header("Filters")
 
+            def _edit_filter_toggle(col_key):
+                """ALL / specific-value mutual exclusion."""
+                def _on_change():
+                    sel = st.session_state[col_key]
+                    if "ALL" in sel and len(sel) > 1 and sel[0] == "ALL":
+                        st.session_state[col_key] = [v for v in sel if v != "ALL"]
+                    elif ("ALL" in sel and sel[-1] == "ALL") or len(sel) == 0:
+                        st.session_state[col_key] = ["ALL"]
+                return _on_change
+
             _edit_raw = st.session_state["edit_data"]
             edit_filters: dict[str, list] = {}
 
@@ -142,6 +152,7 @@ if "edit_data" in st.session_state:
                     options=["ALL"] + unique_vals,
                     default=["ALL"],
                     key=f"edit_flt_{col}",
+                    on_change=_edit_filter_toggle(f"edit_flt_{col}"),
                 )
                 if selected_vals and "ALL" not in selected_vals:
                     edit_filters[col] = selected_vals
@@ -166,6 +177,7 @@ if "edit_data" in st.session_state:
                     options=["ALL"] + unique_vals,
                     default=["ALL"],
                     key=f"edit_flt_{col}",
+                    on_change=_edit_filter_toggle(f"edit_flt_{col}"),
                 )
                 if selected_vals and "ALL" not in selected_vals:
                     edit_filters[col] = selected_vals
