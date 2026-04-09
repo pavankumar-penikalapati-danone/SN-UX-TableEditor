@@ -38,6 +38,9 @@ from config import (
     sp_connection,
 )
 
+# Columns kept in data for DML but hidden from display and filters
+_HIDDEN_DISPLAY_COLS = {"row_id", "ingestion_timestamp", "Unnamed__64", "Unnamed__65", "Unnamed__66", "Unnamed__71", "Unnamed__72", "Unnamed__73"}
+
 
 # ═════════════════════════════════════════════════════════════
 #  PAGE-SPECIFIC: DISCARD CHANGES
@@ -49,6 +52,7 @@ def _admin_discard_all():
             st.warning("No data loaded.")
             return
         st.session_state["admin_sfe_df"] = st.session_state["admin_data"].copy()
+        st.session_state["admin_key_counter"] = st.session_state.get("admin_key_counter", 0) + 1
         if "admin_page" in st.session_state:
             start = (st.session_state["admin_page"] - 1) * ADMIN_PAGE_SIZE
             st.session_state["admin_start_index"] = start
@@ -60,6 +64,10 @@ def _admin_discard_all():
         st.rerun()
     except Exception as ex:
         st.error(f"Failed to discard changes: {ex}")
+
+
+if "admin_key_counter" not in st.session_state:
+    st.session_state["admin_key_counter"] = 0
 
 
 # ═════════════════════════════════════════════════════════════
@@ -100,6 +108,10 @@ if ADMIN_USERS and current_user_lower not in ADMIN_USERS:
     )
     st.stop()
 
+# ── Hide Admin page from sidebar for non-admin users ─────────
+if ADMIN_USERS and current_user_lower not in ADMIN_USERS:
+    st.markdown('<style>[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }</style>', unsafe_allow_html=True)
+
 
 # ═════════════════════════════════════════════════════════════
 #  SIDEBAR – TABLE SELECTOR & FILTERS
@@ -129,7 +141,7 @@ with st.sidebar:
 
         selected_filter_cols = st.multiselect(
             "Filter by columns:",
-            options=list(_raw_df.columns),
+            options=[c for c in _raw_df.columns if c not in _HIDDEN_DISPLAY_COLS],
             default=[],
             key="admin_filter_cols",
         )
@@ -318,9 +330,10 @@ if active_filters:
 
 full_df = st.session_state["admin_data"]
 all_columns = list(full_df.columns)
-visible_columns = admin_get_visible_columns(
-    current_user, selected_table_label, all_columns,
-)
+visible_columns = [
+    c for c in admin_get_visible_columns(current_user, selected_table_label, all_columns)
+    if c not in _HIDDEN_DISPLAY_COLS
+]
 
 if not visible_columns:
     st.warning("You have no column access for this table. Contact an administrator.")
@@ -408,15 +421,15 @@ if IS_MASTER:
 
     edited_data = st.data_editor(
         data=page_slice,
-        height=280, use_container_width=True, hide_index=True,
+        use_container_width=True, hide_index=True,
         num_rows="dynamic",
         disabled=["sp_test_id", "cl_test_id", "ingestion_timestamp", "_clr"],
         column_config=col_cfg,
         column_order=(
             ["_select", "_clr"]
-            + [c for c in page_slice.columns if c not in ("_select", "_clr")]
+            + [c for c in page_slice.columns if c not in ("_select", "_clr") and c not in _HIDDEN_DISPLAY_COLS]
         ),
-        key="admin_editor",
+        key=f"admin_editor_{st.session_state.get('admin_key_counter', 0)}",
     )
 
     # ── Handle copy-row-below ─────────────────────────────────
@@ -669,6 +682,7 @@ if IS_MASTER:
                 )
             except Exception as ex:
                 st.warning(f"Auto-refresh failed: {ex}")
+            st.session_state["admin_key_counter"] = st.session_state.get("admin_key_counter", 0) + 1
             st.toast("Changes saved successfully!", icon="\u2705")
             time.sleep(1)
             st.rerun()
@@ -787,10 +801,10 @@ else:
 
     edited_df = st.data_editor(
         data=page_df,
-        height=280, use_container_width=True, hide_index=True,
+        use_container_width=True, hide_index=True,
         num_rows="dynamic",
         column_config=col_cfg_simple,
-        key="admin_editor",
+        key=f"admin_editor_{st.session_state.get('admin_key_counter', 0)}",
     )
 
     # ── Save modal (simple tables) ────────────────────────────
@@ -939,6 +953,7 @@ else:
                     )
                 except Exception as ex:
                     st.warning(f"Auto-refresh failed: {ex}")
+                st.session_state["admin_key_counter"] = st.session_state.get("admin_key_counter", 0) + 1
                 st.toast("Changes saved successfully!", icon="\u2705")
                 time.sleep(1)
                 st.rerun()
@@ -955,31 +970,19 @@ def _admin_go_page(delta: int):
     st.session_state["admin_page"] += delta
     st.rerun()
 
-p1, p2, p3, p4 = st.columns([1, 2, 1, 1])
-with p1:
-    _, mid, _ = st.columns([1, 2, 1])
-    with mid:
-        if st.button(
-            "Previous", use_container_width=True,
-            disabled=page <= 1, key="admin_prev_page",
-        ):
-            _admin_go_page(-1)
-with p2:
+pg_prev, pg_lbl, pg_input, pg_of, pg_next = st.columns(
+    [1, 0.5, 0.6, 2, 1], vertical_alignment="center",
+)
+with pg_prev:
+    if st.button("Previous", use_container_width=True,
+                 disabled=page <= 1, key="admin_prev_page"):
+        _admin_go_page(-1)
+with pg_lbl:
     st.markdown(
-        f"<div style='text-align:center; font-weight:600;'>"
-        f"Page {page} of {total_pages} &nbsp;|&nbsp; "
-        f"{total_rows:,} rows total</div>",
+        "<div style='text-align:right; font-weight:600; white-space:nowrap;'>Page</div>",
         unsafe_allow_html=True,
     )
-with p3:
-    _, mid, _ = st.columns([1, 2, 1])
-    with mid:
-        if st.button(
-            "Next", use_container_width=True,
-            disabled=page >= total_pages, key="admin_next_page",
-        ):
-            _admin_go_page(1)
-with p4:
+with pg_input:
     admin_go_page_num = st.number_input(
         "Go to page", min_value=1, max_value=total_pages,
         value=page, step=1, key="admin_go_page_input",
@@ -988,3 +991,13 @@ with p4:
     if admin_go_page_num != page:
         st.session_state["admin_page"] = admin_go_page_num
         st.rerun()
+with pg_of:
+    st.markdown(
+        f"<div style='font-weight:600; white-space:nowrap;'>"
+        f"of {total_pages} &nbsp;|&nbsp; {total_rows:,} rows total</div>",
+        unsafe_allow_html=True,
+    )
+with pg_next:
+    if st.button("Next", use_container_width=True,
+                 disabled=page >= total_pages, key="admin_next_page"):
+        _admin_go_page(1)

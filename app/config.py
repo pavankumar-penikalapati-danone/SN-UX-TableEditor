@@ -129,7 +129,7 @@ MANDATORY_UPDATE_COLS = _csv_env("MANDATORY_UPDATE_COLS",
     "test_year,test_country,brand_L0"
 )
 
-PINNED_COLUMNS = _csv_env("PINNED_COLUMNS", "row_id,ingestion_timestamp")
+PINNED_COLUMNS = _csv_env("PINNED_COLUMNS", "sp_test_id,cl_test_id")
 DISABLED_COLUMNS = _csv_env("DISABLED_COLUMNS",
     "sp_test_id,cl_test_id,ingestion_timestamp"
 )
@@ -401,6 +401,20 @@ SHARED_CSS = """
   [data-testid="stDataFrame"] .gdg-header-menu,
   [data-testid="stDataFrame"] [data-testid="column-header-menu"],
   .gdg-header-menu { display: none !important; }
+
+  /* ── Responsive: dataframes & editors fill available viewport ── */
+  [data-testid="stDataFrame"] > div { width: 100% !important; }
+  .block-container { max-width: 100% !important; }
+
+  /* Responsive sidebar for narrow screens */
+  @media (max-width: 768px) {
+    [data-testid="stSidebar"] {
+      width: 100% !important; min-width: 100% !important; max-width: 100% !important;
+    }
+    .block-container {
+      padding-left: 0.5rem !important; padding-right: 0.5rem !important;
+    }
+  }
 </style>
 """
 
@@ -1080,8 +1094,40 @@ def bulk_insert(
 
     try:
         with connection.cursor() as cur:
+            # Get current max row_id before insert
+            cur.execute(f"SELECT COALESCE(MAX(row_id), 0) AS max_id FROM {table_fqn}")
+            _max_id = int(cur.fetchall_arrow().to_pandas()["max_id"].iloc[0])
+
             cur.execute(insert_sql, all_params)
             time.sleep(0.1)
+
+            # Assign sequential row_ids to newly inserted rows (NULL row_id)
+            cur.execute(
+                f"SELECT ingestion_timestamp FROM {table_fqn} "
+                f"WHERE row_id IS NULL AND ingestion_timestamp = :ts LIMIT 1",
+                {"ts": batch_ts},
+            )
+            _null_check = cur.fetchall()
+            if _null_check:
+                # Rows were inserted without row_id — assign them
+                cur.execute(f"""
+                    MERGE INTO {table_fqn} AS target
+                    USING (
+                        SELECT *, ({_max_id} + ROW_NUMBER() OVER (ORDER BY ingestion_timestamp)) AS _new_rid
+                        FROM {table_fqn}
+                        WHERE row_id IS NULL AND ingestion_timestamp = :ts
+                    ) AS source
+                    ON target.row_id IS NULL
+                       AND target.ingestion_timestamp <=> source.ingestion_timestamp
+                       AND target.match_type <=> source.match_type
+                       AND target.brand_L0 <=> source.brand_L0
+                       AND target.test_country <=> source.test_country
+                       AND target.test_year <=> source.test_year
+                       AND target.flavour_pack <=> source.flavour_pack
+                    WHEN MATCHED THEN UPDATE SET row_id = source._new_rid
+                """, {"ts": batch_ts})
+                time.sleep(0.1)
+
             cur.execute(
                 f"SELECT row_id FROM {table_fqn} "
                 f"WHERE ingestion_timestamp = :ts ORDER BY row_id",

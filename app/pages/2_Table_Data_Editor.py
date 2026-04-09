@@ -36,6 +36,9 @@ from config import (
     is_user_in_editor_group,
 )
 
+# Columns kept in data for DML but hidden from display and filters
+_HIDDEN_DISPLAY_COLS = {"row_id", "ingestion_timestamp", "Unnamed__64", "Unnamed__65", "Unnamed__66", "Unnamed__71", "Unnamed__72", "Unnamed__73"}
+
 
 # ═════════════════════════════════════════════════════════════
 #  DISCARD CHANGES  (page-specific session keys)
@@ -48,6 +51,7 @@ def discard_all_changes():
             st.warning("No data loaded. Nothing to discard.")
             return
         st.session_state["edit_sfe_df"] = st.session_state["edit_data"].copy()
+        st.session_state["edit_key_counter"] = st.session_state.get("edit_key_counter", 0) + 1
         if "edit_page" in st.session_state:
             start = (st.session_state["edit_page"] - 1) * PAGE_SIZE
             st.session_state["edit_start_index"] = start
@@ -96,6 +100,11 @@ except Exception as _ex:
     st.warning(f"Could not determine editor permissions: {_ex}")
     _can_edit = False
 
+# ── Hide Admin page from sidebar for non-admin users ─────────
+_admin_users = [u.strip().lower() for u in __import__("os").environ.get("ADMIN_USERS", "").split(",") if u.strip()]
+if _current_user.lower() not in _admin_users:
+    st.markdown('<style>[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }</style>', unsafe_allow_html=True)
+
 
 # ═════════════════════════════════════════════════════════════
 #  PAGE CONTENT  (if/else: shows editor OR fetch form)
@@ -108,6 +117,8 @@ if "edit_data" in st.session_state:
         st.session_state["edit_page"] = 1
         st.session_state["edit_start_index"] = 0
         st.session_state["edit_end_index"] = PAGE_SIZE
+    if "edit_key_counter" not in st.session_state:
+        st.session_state["edit_key_counter"] = 0
 
     # ── Sidebar filters (fixed + dynamic column selection) ──────
     with st.sidebar:
@@ -119,7 +130,7 @@ if "edit_data" in st.session_state:
 
             # ── Fixed filters (always visible from FILTER_COLUMNS) ───
             for col in FILTER_COLUMNS:
-                if col not in _edit_raw.columns:
+                if col not in _edit_raw.columns or col in _HIDDEN_DISPLAY_COLS:
                     continue
                 raw_vals = _edit_raw[col].dropna().unique()
                 if pd.api.types.is_numeric_dtype(_edit_raw[col]):
@@ -136,7 +147,7 @@ if "edit_data" in st.session_state:
                     edit_filters[col] = selected_vals
 
             # ── Dynamic filters (additional columns) ─────────────────
-            extra_cols = [c for c in _edit_raw.columns if c not in FILTER_COLUMNS]
+            extra_cols = [c for c in _edit_raw.columns if c not in FILTER_COLUMNS and c not in _HIDDEN_DISPLAY_COLS]
             selected_filter_cols = st.multiselect(
                 "Filter by columns:",
                 options=extra_cols,
@@ -182,6 +193,7 @@ if "edit_data" in st.session_state:
             if clear_btn:
                 st.session_state["edit_active_filters"] = {}
                 st.session_state["edit_sfe_df"] = st.session_state["edit_data"].copy()
+                st.session_state["edit_key_counter"] = st.session_state.get("edit_key_counter", 0) + 1
                 st.session_state["edit_page"] = 1
                 st.session_state["edit_start_index"] = 0
                 st.session_state["edit_end_index"] = PAGE_SIZE
@@ -214,7 +226,7 @@ if "edit_data" in st.session_state:
         sc1, sc2, sc3 = st.columns([2.5, 2.5, 1], vertical_alignment="bottom")
         with sc1:
             sort_col = st.selectbox(
-                "Column name", options=st.session_state["edit_data"].columns,
+                "Column name", options=[c for c in st.session_state["edit_data"].columns if c not in _HIDDEN_DISPLAY_COLS],
             )
         with sc2:
             sort_ord = st.selectbox(
@@ -298,8 +310,9 @@ if "edit_data" in st.session_state:
 
     edited_data = st.data_editor(
         data=page_slice,
-        height=280, use_container_width=True, hide_index=True,
+        use_container_width=True, hide_index=True,
         num_rows="dynamic" if _can_edit else "fixed",
+        key=f"edit_grid_{st.session_state.get('edit_key_counter', 0)}",
         disabled=(
             get_disabled_columns_by_group(_current_user, list(page_slice.columns)) + ["_clr"]
             if _can_edit
@@ -307,7 +320,7 @@ if "edit_data" in st.session_state:
         ),
         column_config=col_cfg,
         column_order=["_select", "_clr"] + [
-            c for c in page_slice.columns if c not in ("_select", "_clr")
+            c for c in page_slice.columns if c not in ("_select", "_clr") and c not in _HIDDEN_DISPLAY_COLS
         ],
     )
 
@@ -582,6 +595,8 @@ if "edit_data" in st.session_state:
                 )
             except Exception as ex:
                 st.warning(f"Auto-refresh failed: {ex}")
+            st.session_state["edit_key_counter"] = st.session_state.get("edit_key_counter", 0) + 1
+            st.session_state["edit_active_filters"] = {}
             st.toast("Changes saved successfully!", icon="\u2705")
             time.sleep(1)
             st.rerun()
@@ -694,46 +709,41 @@ if "edit_data" in st.session_state:
         )
         st.rerun()
 
-    p1, p2, p3, p4 = st.columns([1, 2, 1, 1])
-    with p1:
-        _, mid, _ = st.columns([1, 2, 1])
-        with mid:
-            if st.button(
-                "Previous", use_container_width=True,
-                disabled=st.session_state["edit_page"] <= 1,
-            ):
-                _go_page(-1)
-    with p2:
+    _total_rows = len(st.session_state.get("edit_sfe_df", []))
+    _pg = st.session_state["edit_page"]
+    _tp = st.session_state["edit_total_pages"]
+
+    pg_prev, pg_lbl, pg_input, pg_of, pg_next = st.columns(
+        [1, 0.5, 0.6, 2, 1], vertical_alignment="center",
+    )
+    with pg_prev:
+        if st.button("Previous", use_container_width=True, disabled=_pg <= 1):
+            _go_page(-1)
+    with pg_lbl:
         st.markdown(
-            f"<div style='text-align:center; font-weight:600;'>"
-            f"Page {st.session_state['edit_page']} of "
-            f"{st.session_state['edit_total_pages']}</div>",
+            "<div style='text-align:right; font-weight:600; white-space:nowrap;'>Page</div>",
             unsafe_allow_html=True,
         )
-    with p3:
-        _, mid, _ = st.columns([1, 2, 1])
-        with mid:
-            if st.button(
-                "Next", use_container_width=True,
-                disabled=(
-                    st.session_state["edit_page"]
-                    >= st.session_state["edit_total_pages"]
-                ),
-            ):
-                _go_page(1)
-    with p4:
+    with pg_input:
         go_page_num = st.number_input(
-            "Go to page", min_value=1,
-            max_value=st.session_state["edit_total_pages"],
-            value=st.session_state["edit_page"],
-            step=1, key="edit_go_page_input",
+            "Go to page", min_value=1, max_value=_tp,
+            value=_pg, step=1, key="edit_go_page_input",
             label_visibility="collapsed",
         )
-        if go_page_num != st.session_state["edit_page"]:
+        if go_page_num != _pg:
             st.session_state["edit_page"] = go_page_num
             st.session_state["edit_start_index"] = (go_page_num - 1) * PAGE_SIZE
             st.session_state["edit_end_index"] = st.session_state["edit_start_index"] + PAGE_SIZE
             st.rerun()
+    with pg_of:
+        st.markdown(
+            f"<div style='font-weight:600; white-space:nowrap;'>"
+            f"of {_tp} &nbsp;|&nbsp; {_total_rows:,} rows total</div>",
+            unsafe_allow_html=True,
+        )
+    with pg_next:
+        if st.button("Next", use_container_width=True, disabled=_pg >= _tp):
+            _go_page(1)
 
 else:
     # ── Auto-fetch on page load ──────────────────────────────
