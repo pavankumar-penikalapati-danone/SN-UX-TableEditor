@@ -281,7 +281,7 @@ if "dum_data" in st.session_state:
                 st.rerun()
 
     # ── Title bar ────────────────────────────────────────────
-    rc1, rc2, rc3 = st.columns([4, 1, 1], vertical_alignment="bottom")
+    rc1, rc2, rc3, rc4 = st.columns([3, 1, 1, 1], vertical_alignment="bottom")
     with rc1:
         st.markdown(
             "<h2 style='font-size:28px; font-weight:700; margin-bottom:5px;'>"
@@ -298,45 +298,17 @@ if "dum_data" in st.session_state:
         if _can_edit:
             st.button("\u2795 Add Row", type="primary", key="dum_add_row_btn",
                       use_container_width=True)
+    with rc4:
+        if _can_edit:
+            st.button("\u270f\ufe0f Edit Row", type="secondary", key="dum_edit_row_btn_top",
+                      use_container_width=True)
 
-    # ═════════════════════════════════════════════════════════
-    #  ZONE CONTEXT SELECTOR  –  controls CBU dropdown in grid
-    # ═════════════════════════════════════════════════════════
-    st.markdown(
-        "<div style='background:#f0f2f6; padding:10px 16px; border-radius:8px; "
-        "margin-bottom:8px;'>",
-        unsafe_allow_html=True,
-    )
-    zc1, zc2, zc3 = st.columns([2, 2, 2], vertical_alignment="bottom")
-    with zc1:
-        _ctx_zone = st.selectbox(
-            "\U0001f30d **Select Zone** (filters CBU dropdown in grid):",
-            options=["-- All Zones --"] + _zone_list,
-            index=0,
-            key="dum_ctx_zone",
-            help="Choose a Macro Zone to narrow the CBU dropdown options "
-                 "in the table below. Applies to both new and existing rows.",
+    if _can_edit:
+        st.caption(
+            "\U0001f4a1 **zone** and **CBU** columns are read-only in the grid. "
+            "Select a row (\u2795) and click **\u270f\ufe0f Edit Row** to change "
+            "zone/CBU with cascading dropdowns."
         )
-    # Derive CBU options based on zone context
-    if _ctx_zone and _ctx_zone != "-- All Zones --":
-        _ctx_cbu_options = _get_cbu_for_zone(_ctx_zone)
-    else:
-        _ctx_cbu_options = _all_cbu_list
-
-    with zc2:
-        st.markdown(
-            f"<div style='padding-top:8px;'>"
-            f"\U0001f4cb <b>CBU options available:</b> {len(_ctx_cbu_options)}"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with zc3:
-        if _ctx_zone and _ctx_zone != "-- All Zones --":
-            st.caption(f"CBUs: {', '.join(_ctx_cbu_options[:8])}"
-                       + (f" ... +{len(_ctx_cbu_options)-8} more" if len(_ctx_cbu_options) > 8 else ""))
-        else:
-            st.caption("Showing all CBUs from lookup table")
-    st.markdown("</div>", unsafe_allow_html=True)
 
     # ── Sort form ────────────────────────────────────────────
     with st.form("dum_sort_form", clear_on_submit=False):
@@ -423,28 +395,36 @@ if "dum_data" in st.session_state:
         " ", width=35, pinned=True, disabled=True,
     )
 
-    # ── Override zone & CBU column configs with lookup values ──
-    # zone column: always shows all macro_zone_new values
+    # ── zone & CBU: read-only in grid, edit via modal for cascading ──
+    # Cascading dropdowns (zone→CBU→BU→RU) work in the Edit Row modal.
+    # In the grid, zone and CBU are shown but disabled to prevent
+    # invalid combinations. Select a row + click "Edit Row" to change.
     if _zone_list:
         col_cfg["zone"] = st.column_config.SelectboxColumn(
-            "zone", options=_zone_list, required=False,
+            "zone", options=_zone_list, required=False, disabled=True,
         )
-    # CBU column: filtered by the zone context selector above
-    if _ctx_cbu_options:
+    if _all_cbu_list:
         col_cfg["CBU"] = st.column_config.SelectboxColumn(
-            "CBU", options=_ctx_cbu_options, required=False,
+            "CBU", options=_all_cbu_list, required=False, disabled=True,
         )
+
+    # Build disabled list: standard disabled cols + zone + CBU
+    _base_disabled = (
+        get_disabled_columns_by_group(_current_user, list(page_slice.columns)) + ["_clr"]
+        if _can_edit
+        else list(page_slice.columns)
+    )
+    if _can_edit and "zone" not in _base_disabled:
+        _base_disabled.append("zone")
+    if _can_edit and "CBU" not in _base_disabled:
+        _base_disabled.append("CBU")
 
     edited_data = st.data_editor(
         data=page_slice,
         use_container_width=True, hide_index=True,
         num_rows="dynamic" if _can_edit else "fixed",
-        key=f"dum_grid_{st.session_state.get('dum_key_counter', 0)}_{_ctx_zone}",
-        disabled=(
-            get_disabled_columns_by_group(_current_user, list(page_slice.columns)) + ["_clr"]
-            if _can_edit
-            else True
-        ),
+        key=f"dum_grid_{st.session_state.get('dum_key_counter', 0)}",
+        disabled=_base_disabled if _can_edit else True,
         column_config=col_cfg,
         column_order=["_select", "_clr"] + [
             c for c in page_slice.columns if c not in ("_select", "_clr") and c not in _HIDDEN_DISPLAY_COLS
@@ -1001,7 +981,7 @@ if "dum_data" in st.session_state:
         if edit_cancel:
             st.rerun()
 
-    if _can_edit and st.session_state.get("dum_edit_row_btn"):
+    if _can_edit and (st.session_state.get("dum_edit_row_btn") or st.session_state.get("dum_edit_row_btn_top")):
         edit_row_modal()
 
     # ── Pagination ───────────────────────────────────────────
