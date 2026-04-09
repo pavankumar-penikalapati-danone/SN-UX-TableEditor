@@ -39,7 +39,7 @@ from config import (
 )
 
 # Columns kept in data for DML but hidden from display and filters
-_HIDDEN_DISPLAY_COLS = {"row_id", "ingestion_timestamp", "Unnamed__64", "Unnamed__65", "Unnamed__66", "Unnamed__71", "Unnamed__72", "Unnamed__73"}
+_HIDDEN_DISPLAY_COLS = {"ingestion_timestamp", "Unnamed__64", "Unnamed__65", "Unnamed__66", "Unnamed__71", "Unnamed__72", "Unnamed__73"}
 
 
 # ═════════════════════════════════════════════════════════════

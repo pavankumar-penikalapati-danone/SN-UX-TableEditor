@@ -33,7 +33,7 @@ from config import (
 from databricks import sql
 
 # Columns kept in data but hidden from display, filters, and sort
-_HIDDEN_DISPLAY_COLS = {"row_id", "ingestion_timestamp", "Unnamed__64", "Unnamed__65", "Unnamed__66", "Unnamed__71", "Unnamed__72", "Unnamed__73"}
+_HIDDEN_DISPLAY_COLS = {"ingestion_timestamp", "Unnamed__64", "Unnamed__65", "Unnamed__66", "Unnamed__71", "Unnamed__72", "Unnamed__73"}
 
 
 # ═════════════════════════════════════════════════════════════
