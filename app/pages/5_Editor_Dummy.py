@@ -439,7 +439,7 @@ if "dum_data" in st.session_state:
         data=page_slice,
         use_container_width=True, hide_index=True,
         num_rows="dynamic" if _can_edit else "fixed",
-        key=f"dum_grid_{st.session_state.get('dum_key_counter', 0)}",
+        key=f"dum_grid_{st.session_state.get('dum_key_counter', 0)}_{_ctx_zone}",
         disabled=(
             get_disabled_columns_by_group(_current_user, list(page_slice.columns)) + ["_clr"]
             if _can_edit
