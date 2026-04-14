@@ -58,4 +58,4 @@ if _is_admin:
     st.title("🔒 Admin Table Editor")
     st.write("Admin-only access. Edit Master Table or Mapping Codes with per-user column visibility.")
     if st.button("Go to Admin Table Editor"):
-        st.switch_page("pages/5_Admin_Table_Editor.py")
+        st.switch_page("pages/4_Admin_Table_Editor.py")
