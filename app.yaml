@@ -16,16 +16,19 @@ env:
 
   # ── Table FQNs ──────────────────────────────────────────
   - name: UC_TABLE_FQN
-    value: "onesource_eu_dev_rni.ux_sn_global.ux_sn_conso_master_table_dbapp"
+    value: "onesource_eu_dev_rni.ux_sn_global.ux_sn_conso_master_table_dbapp_clone"
 
   - name: AUDIT_TABLE_FQN
-    value: "onesource_eu_dev_rni.ux_sn_global.ux_sn_conso_master_table_dbapp_audit"
+    value: "onesource_eu_dev_rni.ux_sn_global.ux_sn_conso_master_table_dbapp_clone_audit"
 
   - name: MAPPING_TABLE_FQN
     value: "onesource_eu_dev_rni.ux_sn_global.mapping_codes"
 
   - name: DROPDOWN_TABLE_FQN
     value: "onesource_eu_dev_rni.ux_sn_global.ux_sn_dropdown_options"
+
+  - name: APPROVAL_TABLE_FQN
+    value: "onesource_eu_dev_rni.ux_sn_global.ux_sn_test_status_approvals"
 
   - name: CATALOG
     value: "onesource_eu_dev_rni"
@@ -35,6 +38,9 @@ env:
 
   # ── Pagination & sorting ────────────────────────────────
   - name: PAGE_SIZE
+    value: "100"
+
+  - name: TEST_STATUS_PAGE_SIZE
     value: "100"
 
   - name: DEFAULT_SORT_COLUMN
@@ -51,7 +57,7 @@ env:
     value: "sp_test_id,cl_test_id,match_type,brand_L0,brand_L1,prod_type,flavour_pack,test_country,test_year,zone,CBU,competitor1,competitor2,prod_catL1,retest_year,test_area,prod_status,score_main,cl_pct,test_environment,test_status,cl_pyramid_level,cl_questionnaire,cl_substantiated,pack,prod_name_pack,test_danoneprod,ingestion_timestamp"
 
   - name: DROPDOWN_COLS
-    value: "match_type,brand_L1,branded_flag,flavour_pack,prod_type,test_country,zone,prod_catL4,stage,CBU,brand_L0,prod_catL1,prod_catL2,prod_catL3"
+    value: "match_type,brand_L1,branded_flag,flavour_pack,prod_type,test_country,test_year,zone,prod_catL4,stage,CBU,brand_L0,prod_catL1,prod_catL2,prod_catL3"
 
   - name: FILTER_COLUMNS
     value: "test_year,test_country,brand_L0"
@@ -104,3 +110,18 @@ env:
   #   ["col1",...]  = can ONLY edit those columns; rest are disabled
   - name: EDITOR_GROUP_COLUMN_ACCESS
     value: '{"AAD-GAA-WW-ONESOURCE-T-RNI-ANL": ["*"], "AAD-GAA-WW-RNI-UX-SUP-CONSOMASTER-EXT": ["match_type","brand_L0","brand_L1","prod_type","flavour_pack","test_country","test_year","zone","CBU","competitor1","competitor2","prod_catL1","test_area","prod_status"]}'
+
+  # ── test_status approval page (page 5) ─────────────────
+  # Comma-separated approver emails
+  - name: TEST_STATUS_APPROVERS
+    value: "pavankumar.penikalapati@external.danone.com,tiago.brito@danone.com,vedant.raghav@external.danone.com"
+
+  # SMTP for email notifications (optional – leave empty to skip)
+  # - name: SMTP_HOST
+  #   value: "smtp.office365.com"
+  # - name: SMTP_PORT
+  #   value: "587"
+  # - name: SMTP_USER
+  #   value: ""
+  # - name: SMTP_PASS
+  #   value: ""
