@@ -833,22 +833,30 @@ else:
             )
             return
 
-        common_len = min(len(orig), len(edit))
-        deleted_count = max(0, len(orig) - len(edit))
-        added_count = max(0, len(edit) - len(orig))
-
-        changed_rows: list[int] = []
-        for i in range(common_len):
-            for col in visible_columns:
-                o_val = orig.at[i, col]
-                e_val = edit.at[i, col]
-                o_str = "" if pd.isna(o_val) else str(o_val)
-                e_str = "" if pd.isna(e_val) else str(e_val)
-                if o_str != e_str:
-                    if i not in changed_rows:
-                        changed_rows.append(i)
-
-        updated_count = len(changed_rows)
+        from collections import Counter
+        def _row_key(row, cols):
+            return tuple("" if pd.isna(row[c]) else str(row[c]) for c in cols)
+        orig_keys = [_row_key(orig.iloc[i], visible_columns) for i in range(len(orig))]
+        edit_keys = [_row_key(edit.iloc[i], visible_columns) for i in range(len(edit))]
+        orig_counter = Counter(orig_keys)
+        edit_counter = Counter(edit_keys)
+        truly_deleted = orig_counter - edit_counter
+        truly_added = edit_counter - orig_counter
+        _del_remaining = dict(truly_deleted)
+        deleted_indices: list[int] = []
+        for i, key in enumerate(orig_keys):
+            if key in _del_remaining and _del_remaining[key] > 0:
+                deleted_indices.append(i)
+                _del_remaining[key] -= 1
+        _add_remaining = dict(truly_added)
+        added_indices: list[int] = []
+        for i, key in enumerate(edit_keys):
+            if key in _add_remaining and _add_remaining[key] > 0:
+                added_indices.append(i)
+                _add_remaining[key] -= 1
+        deleted_count = len(deleted_indices)
+        added_count = len(added_indices)
+        updated_count = 0
 
         st.warning(
             f"Rows added: {added_count}, "
@@ -856,15 +864,12 @@ else:
             f"Rows updated: {updated_count}"
         )
 
-        if updated_count > 0:
-            st.write("**Updated Rows:**")
-            st.dataframe(edit.iloc[changed_rows])
         if added_count > 0:
             st.write("**Added Rows:**")
-            st.dataframe(edit.iloc[common_len:])
+            st.dataframe(edit.iloc[added_indices])
         if deleted_count > 0:
             st.write("**Deleted Rows:**")
-            st.dataframe(orig.iloc[common_len:])
+            st.dataframe(orig.iloc[deleted_indices])
 
         scr1, scr2, _ = st.columns([1.5, 1.5, 3])
         with scr1:
@@ -883,34 +888,11 @@ else:
             table_fqn = selected_table_fqn
             errors: list[str] = []
 
-            if updated_count > 0:
-                with st.spinner("Updating rows..."):
-                    for idx in changed_rows:
-                        new_row = edit.iloc[idx]
-                        old_row = orig.iloc[idx]
-                        set_clause, set_params = build_composite_set(
-                            new_row, visible_columns,
-                        )
-                        where_clause, where_params = build_composite_where(
-                            old_row, visible_columns,
-                        )
-                        if set_clause and where_clause:
-                            update_sql = (
-                                f"UPDATE {table_fqn} SET {set_clause} "
-                                f"WHERE {where_clause}"
-                            )
-                            try:
-                                run_statement(
-                                    update_sql, set_params + where_params, tk,
-                                )
-                            except Exception as ex:
-                                errors.append(f"Update row {idx}: {ex}")
-                if not errors:
-                    st.success(f"Updated {updated_count} row(s).")
+            pass  # cell edits handled as delete+add for non-PK tables
 
             if added_count > 0:
                 with st.spinner("Inserting rows..."):
-                    new_rows = edit.iloc[common_len:]
+                    new_rows = edit.iloc[added_indices]
                     for _, row in new_rows.iterrows():
                         cols: list[str] = []
                         vals: list = []
@@ -934,7 +916,7 @@ else:
 
             if deleted_count > 0:
                 with st.spinner("Deleting rows..."):
-                    del_rows = orig.iloc[common_len:]
+                    del_rows = orig.iloc[deleted_indices]
                     for row_idx, (_, row) in enumerate(del_rows.iterrows()):
                         where_clause, where_params = build_composite_where(
                             row, visible_columns,

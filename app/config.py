@@ -111,7 +111,7 @@ DML_COLUMNS = _csv_env("DML_COLUMNS",
 
 DROPDOWN_COLS = _csv_env("DROPDOWN_COLS",
     "match_type,brand_L1,branded_flag,flavour_pack,prod_type,"
-    "test_country,zone,prod_catL4,stage,CBU,brand_L0,"
+    "test_country,test_year,zone,prod_catL4,stage,CBU,brand_L0,"
     "prod_catL1,prod_catL2,prod_catL3"
 )
 
