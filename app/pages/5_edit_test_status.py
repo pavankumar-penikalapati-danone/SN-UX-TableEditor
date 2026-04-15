@@ -1,10 +1,12 @@
 # ============================================================
 # 5_edit_test_status.py  –  test_status Edit with Approval
 # ============================================================
-# When a user edits test_status, the change is NOT applied
-# directly. Instead it creates a PENDING approval request.
-# An approver can then approve (commits to DB) or reject.
-# Email notification is sent to the configured approver.
+# Workflow:
+#   - If new status == "Cancelled"  →  commit directly (no approval)
+#   - If new status != "Cancelled"  →  PENDING approval request
+#   - Approver opens "Pending Approvals" tab → approve / reject
+#   - Approve  →  UPDATE committed to master table
+#   - Reject   →  change discarded, no DB update
 # ============================================================
 
 from __future__ import annotations
@@ -16,7 +18,6 @@ import uuid
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -40,20 +41,20 @@ APPROVAL_TABLE = os.getenv(
 )
 TEST_STATUS_OPTIONS = ["Cancelled", "Complete", "Future Test", "Test In Progress"]
 
+# "Cancelled" bypasses approval – everything else needs approval
+DIRECT_COMMIT_STATUSES = {"Cancelled"}
+
 APPROVER_EMAILS = [
     e.strip() for e in os.getenv("TEST_STATUS_APPROVERS", "").split(",") if e.strip()
 ]
 
-SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASS = os.getenv("SMTP_PASS", "")
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
+SMTP_HOST  = os.getenv("SMTP_HOST", "")
+SMTP_PORT  = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER  = os.getenv("SMTP_USER", "")
+SMTP_PASS  = os.getenv("SMTP_PASS", "")
+SMTP_FROM  = os.getenv("SMTP_FROM", SMTP_USER)
 
 TS_PAGE_SIZE = int(os.getenv("TEST_STATUS_PAGE_SIZE", str(PAGE_SIZE)))
-
-_HIDDEN_DISPLAY_COLS = {"ingestion_timestamp", "Unnamed__64", "Unnamed__65",
-                        "Unnamed__66", "Unnamed__71", "Unnamed__72", "Unnamed__73"}
 
 
 # ═════════════════════════════════════════════════════════════
@@ -84,7 +85,7 @@ is_approver = current_user.lower() in [e.lower() for e in APPROVER_EMAILS]
 
 
 # ═════════════════════════════════════════════════════════════
-#  NOTIFICATION HELPER
+#  NOTIFICATION HELPERS
 # ═════════════════════════════════════════════════════════════
 
 def send_approval_email(to_emails, row_id, sp_test_id, old_status, new_status, requested_by):
@@ -101,7 +102,8 @@ def send_approval_email(to_emails, row_id, sp_test_id, old_status, new_status, r
       <tr><td><b>Requested By</b></td><td>{requested_by}</td></tr>
       <tr><td><b>Requested At</b></td><td>{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</td></tr>
     </table>
-    <br><p>Please log in to <b>SN UX Table Editor</b> > <b>Edit test_status</b> to approve or reject.</p>
+    <br><p>Please log in to <b>SN UX Table Editor</b> &rarr; <b>Edit test_status</b> &rarr;
+    <b>Pending Approvals</b> tab to approve or reject.</p>
     """
     try:
         msg = MIMEMultipart("alternative")
@@ -120,20 +122,23 @@ def send_approval_email(to_emails, row_id, sp_test_id, old_status, new_status, r
         return False
 
 
-def notify_via_audit(row_id, sp_test_id, old_status, new_status, requested_by):
+def notify_via_audit(row_id, sp_test_id, old_status, new_status, requested_by, event_type="TEST_STATUS_APPROVAL_REQUEST"):
     try:
         tk = get_user_token()
         conn = get_connection(tk)
         create_audit_table(conn)
         write_audit_events(conn, [{
             "event_ts": datetime.now(timezone.utc).replace(tzinfo=None),
-            "event_type": "TEST_STATUS_APPROVAL_REQUEST",
+            "event_type": event_type,
             "user_name": requested_by,
             "session_id": st.session_state.get("ts_session_id", ""),
-            "page_no": 5, "table_fqn": TABLE_FQN,
-            "row_id": int(row_id), "col_name": "test_status",
-            "old_value": old_status, "new_value": new_status,
-            "notes": f"Approval requested. Approvers: {', '.join(APPROVER_EMAILS) or 'Not configured'}",
+            "page_no": 5,
+            "table_fqn": TABLE_FQN,
+            "row_id": int(row_id),
+            "col_name": "test_status",
+            "old_value": old_status,
+            "new_value": new_status,
+            "notes": f"Approvers: {', '.join(APPROVER_EMAILS) or 'N/A'}",
         }])
     except Exception:
         pass
@@ -147,7 +152,7 @@ def fetch_data(token):
     q = (f"SELECT row_id, sp_test_id, cl_test_id, test_status, "
          f"test_country, brand_L0, test_year, prod_catL1 "
          f"FROM {TABLE_FQN} ORDER BY row_id "
-         f"-- cache_buster: {uuid.uuid4()}")
+         f"-- cb: {uuid.uuid4()}")
     return run_query(q, token)
 
 
@@ -164,7 +169,31 @@ def fetch_all_approvals(token):
     return run_query(q, token)
 
 
+# ── Direct commit (for Cancelled) ────────────────────────────
+def direct_commit(row_id, old_status, new_status, sp_test_id, user, token):
+    """Directly update the master table (no approval needed)."""
+    run_statement(
+        f"UPDATE {TABLE_FQN} SET test_status = ? WHERE row_id = ?",
+        [new_status, int(row_id)], token,
+    )
+    # Also log in the approval table with APPROVED status for audit trail
+    run_statement(
+        f"INSERT INTO {APPROVAL_TABLE} "
+        f"(row_id, sp_test_id, old_status, new_status, requested_by, "
+        f" requested_at, approver_email, status, reviewed_by, reviewed_at, review_comment) "
+        f"VALUES (?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, 'Auto-approved (Cancelled)')",
+        [int(row_id), sp_test_id, old_status, new_status, user,
+         datetime.now(timezone.utc).replace(tzinfo=None),
+         "N/A",
+         user,
+         datetime.now(timezone.utc).replace(tzinfo=None)],
+        token,
+    )
+
+
+# ── Submit approval request (for non-Cancelled) ──────────────
 def submit_approval_request(row_id, sp_test_id, old_status, new_status, user, token):
+    """Insert a PENDING row – the change is NOT applied yet."""
     run_statement(
         f"INSERT INTO {APPROVAL_TABLE} "
         f"(row_id, sp_test_id, old_status, new_status, requested_by, "
@@ -177,6 +206,7 @@ def submit_approval_request(row_id, sp_test_id, old_status, new_status, user, to
     )
 
 
+# ── Approve: commit the change to master table ───────────────
 def approve_request(approval_id, reviewer, comment, token):
     req = run_query(
         f"SELECT row_id, new_status FROM {APPROVAL_TABLE} WHERE approval_id = {approval_id}",
@@ -186,8 +216,13 @@ def approve_request(approval_id, reviewer, comment, token):
         raise ValueError(f"Approval {approval_id} not found")
     row_id = int(req.iloc[0]["row_id"])
     new_status = req.iloc[0]["new_status"]
-    run_statement(f"UPDATE {TABLE_FQN} SET test_status = ? WHERE row_id = ?",
-                  [new_status, row_id], token)
+
+    # 1) Commit change to master table
+    run_statement(
+        f"UPDATE {TABLE_FQN} SET test_status = ? WHERE row_id = ?",
+        [new_status, row_id], token,
+    )
+    # 2) Mark as APPROVED
     run_statement(
         f"UPDATE {APPROVAL_TABLE} SET status = 'APPROVED', "
         f"reviewed_by = ?, reviewed_at = ?, review_comment = ? "
@@ -195,8 +230,10 @@ def approve_request(approval_id, reviewer, comment, token):
         [reviewer, datetime.now(timezone.utc).replace(tzinfo=None), comment, approval_id],
         token,
     )
+    return row_id, new_status
 
 
+# ── Reject: discard – no DB update ───────────────────────────
 def reject_request(approval_id, reviewer, comment, token):
     run_statement(
         f"UPDATE {APPROVAL_TABLE} SET status = 'REJECTED', "
@@ -208,7 +245,7 @@ def reject_request(approval_id, reviewer, comment, token):
 
 
 # ═════════════════════════════════════════════════════════════
-#  SIDEBAR FILTERS  (same pattern as page 2)
+#  SIDEBAR FILTERS  (same pattern as edit page)
 # ═════════════════════════════════════════════════════════════
 
 ensure_session_id("ts_session_id")
@@ -267,7 +304,12 @@ with st.sidebar:
 
 st.markdown(
     "<h2 style='font-size:28px; font-weight:700; margin-bottom:5px;'>"
-    "Edit test_status (Approval Required)</h2>",
+    "Edit test_status</h2>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "> **Cancelled** &rarr; committed immediately &nbsp;|&nbsp; "
+    "**All other statuses** &rarr; sent for approval",
     unsafe_allow_html=True,
 )
 
@@ -281,12 +323,12 @@ tab_edit, tab_pending, tab_history = st.tabs([
 ])
 
 
-# ─── TAB 1: Request Status Change (with pagination) ─────────
+# ─── TAB 1: Request Status Change (paginated) ───────────────
 with tab_edit:
     try:
         tk = get_user_token()
 
-        # ── Fetch / cache data ────────────────────────────────
+        # Fetch / cache
         if "ts_data" not in st.session_state:
             with st.spinner("Loading data..."):
                 st.session_state["ts_data"] = fetch_data(tk)
@@ -295,7 +337,7 @@ with tab_edit:
 
         data = st.session_state["ts_data"]
 
-        # ── Apply sidebar filters ─────────────────────────────
+        # Apply sidebar filters
         active_filters = st.session_state.get("ts_active_filters", {})
         if active_filters:
             filtered = data.copy()
@@ -307,7 +349,7 @@ with tab_edit:
         if data.empty:
             st.info("No data found (check filters).")
         else:
-            # ── Pagination state ──────────────────────────────
+            # ── Pagination ────────────────────────────────────
             total_rows = len(data)
             total_pages = max(1, math.ceil(total_rows / TS_PAGE_SIZE))
             if "ts_page" not in st.session_state:
@@ -318,10 +360,9 @@ with tab_edit:
 
             st.caption(
                 f"Showing rows **{si + 1}** to **{min(ei, total_rows)}** "
-                f"of **{total_rows:,}** | Page {page}/{total_pages}"
+                f"of **{total_rows:,}** &nbsp;|&nbsp; Page {page}/{total_pages}"
             )
 
-            # ── Page slice for editor ─────────────────────────
             page_df = data.iloc[si:ei].copy().reset_index(drop=True)
             page_df["new_status"] = page_df["test_status"]
 
@@ -349,21 +390,62 @@ with tab_edit:
                 key=f"ts_editor_{page}",
             )
 
-            # ── Detect changes on this page ───────────────────
+            # ── Detect changes ────────────────────────────────
             changed_mask = edited["new_status"] != page_df["test_status"]
             changed = edited[changed_mask]
 
             if len(changed) > 0:
-                st.warning(f"**{len(changed)}** row(s) have status changes pending submission.")
-                st.dataframe(
-                    changed[["row_id", "sp_test_id", "test_status", "new_status"]],
-                    use_container_width=True, hide_index=True,
-                )
+                # Split into direct-commit vs needs-approval
+                direct_rows = changed[changed["new_status"].isin(DIRECT_COMMIT_STATUSES)]
+                approval_rows = changed[~changed["new_status"].isin(DIRECT_COMMIT_STATUSES)]
+
+                st.markdown("---")
+
+                if len(direct_rows) > 0:
+                    st.success(
+                        f"**{len(direct_rows)}** row(s) set to **Cancelled** "
+                        f"&rarr; will be committed **immediately**"
+                    )
+                    st.dataframe(
+                        direct_rows[["row_id", "sp_test_id", "test_status", "new_status"]],
+                        use_container_width=True, hide_index=True,
+                    )
+
+                if len(approval_rows) > 0:
+                    st.warning(
+                        f"**{len(approval_rows)}** row(s) &rarr; "
+                        f"require **approval** before committing"
+                    )
+                    st.dataframe(
+                        approval_rows[["row_id", "sp_test_id", "test_status", "new_status"]],
+                        use_container_width=True, hide_index=True,
+                    )
+
                 if not _can_edit:
                     st.error("You don't have editor permissions to submit changes.")
-                elif st.button("Submit for Approval", type="primary", key="ts_submit"):
-                    submitted = 0
-                    for _, row in changed.iterrows():
+                elif st.button("Submit Changes", type="primary", key="ts_submit"):
+                    committed = 0
+                    pending = 0
+
+                    # ── Direct commits (Cancelled) ────────────
+                    for _, row in direct_rows.iterrows():
+                        try:
+                            direct_commit(
+                                row["row_id"], row["test_status"],
+                                row["new_status"], row.get("sp_test_id"),
+                                current_user, tk,
+                            )
+                            notify_via_audit(
+                                row["row_id"], row.get("sp_test_id"),
+                                row["test_status"], row["new_status"],
+                                current_user, "TEST_STATUS_DIRECT_COMMIT",
+                            )
+                            committed += 1
+                        except Exception as ex:
+                            st.error(f"Failed to commit row {row['row_id']}: {ex}")
+
+                    # ── Approval requests (non-Cancelled) ─────
+                    for _, row in approval_rows.iterrows():
                         try:
                             submit_approval_request(
                                 row["row_id"], row.get("sp_test_id"),
@@ -381,16 +463,26 @@ with tab_edit:
                                     row["test_status"], row["new_status"],
                                     current_user,
                                 )
-                            submitted += 1
+                            pending += 1
                         except Exception as ex:
                             st.error(f"Failed to submit row {row['row_id']}: {ex}")
-                    if submitted:
-                        notif_msg = (
-                            f" Email sent to {', '.join(APPROVER_EMAILS)}."
+
+                    # ── Result summary ────────────────────────
+                    msgs = []
+                    if committed:
+                        msgs.append(f"**{committed}** row(s) committed directly (Cancelled)")
+                    if pending:
+                        notif = (
+                            f"Email sent to approvers."
                             if SMTP_HOST and APPROVER_EMAILS
-                            else " (Configure SMTP for email notifications.)"
+                            else "Check **Pending Approvals** tab."
                         )
-                        st.success(f"{submitted} approval request(s) submitted.{notif_msg}")
+                        msgs.append(f"**{pending}** row(s) sent for approval. {notif}")
+
+                    if msgs:
+                        st.success(" | ".join(msgs))
+                        # Refresh cached data
+                        st.session_state["ts_data"] = fetch_data(tk)
                         st.balloons()
             else:
                 st.info("Edit the **new_status** column to request a change.")
@@ -433,7 +525,7 @@ with tab_edit:
                              disabled=page >= total_pages, key="ts_next_page"):
                     _ts_go_page(1)
 
-            # ── Refresh button ────────────────────────────────
+            # Refresh
             if st.button("Refresh Data", key="ts_refresh"):
                 st.session_state["ts_data"] = fetch_data(tk)
                 st.session_state["ts_page"] = 1
@@ -443,18 +535,18 @@ with tab_edit:
         st.error(f"Failed to load data: {ex}")
 
 
-# ─── TAB 2: Pending Approvals ────────────────────────────────
+# ─── TAB 2: Pending Approvals (approver view) ────────────────
 with tab_pending:
     try:
         tk = get_user_token()
-        pending = fetch_pending_approvals(tk)
+        pending_df = fetch_pending_approvals(tk)
 
-        if pending.empty:
+        if pending_df.empty:
             st.info("No pending approval requests.")
         else:
-            st.warning(f"**{len(pending)}** pending request(s)")
+            st.warning(f"**{len(pending_df)}** pending request(s) awaiting review")
 
-            for idx, req in pending.iterrows():
+            for idx, req in pending_df.iterrows():
                 with st.expander(
                     f"Row {req['row_id']}  |  "
                     f"{req.get('old_status', '?')} -> {req.get('new_status', '?')}  |  "
@@ -468,8 +560,8 @@ with tab_pending:
 |---|---|
 | **Row ID** | {req['row_id']} |
 | **SP Test ID** | {req.get('sp_test_id', 'N/A')} |
-| **Old Status** | {req.get('old_status', 'N/A')} |
-| **New Status** | `{req.get('new_status', 'N/A')}` |
+| **Current Status** | {req.get('old_status', 'N/A')} |
+| **Requested Status** | `{req.get('new_status', 'N/A')}` |
 | **Requested By** | {req.get('requested_by', '?')} |
 | **Requested At** | {req.get('requested_at', '?')} |
                         """)
@@ -482,8 +574,14 @@ with tab_pending:
                                 if st.button("Approve", type="primary",
                                              key=f"approve_{req['approval_id']}"):
                                     try:
-                                        approve_request(req["approval_id"], current_user, comment, tk)
-                                        st.success(f"Approved! Row {req['row_id']} -> {req['new_status']}")
+                                        rid, ns = approve_request(req["approval_id"], current_user, comment, tk)
+                                        st.success(
+                                            f"Approved & committed! "
+                                            f"Row {rid} test_status -> {ns}"
+                                        )
+                                        # Refresh cached data
+                                        if "ts_data" in st.session_state:
+                                            del st.session_state["ts_data"]
                                         st.rerun()
                                     except Exception as ex:
                                         st.error(f"Approve failed: {ex}")
@@ -491,10 +589,15 @@ with tab_pending:
                                 if st.button("Reject", key=f"reject_{req['approval_id']}"):
                                     try:
                                         reject_request(req["approval_id"], current_user, comment, tk)
-                                        st.warning(f"Rejected request for Row {req['row_id']}")
+                                        st.warning(
+                                            f"Rejected. Row {req['row_id']} "
+                                            f"change discarded (no DB update)."
+                                        )
                                         st.rerun()
                                     except Exception as ex:
                                         st.error(f"Reject failed: {ex}")
+                        elif current_user.lower() == req.get("requested_by", "").lower():
+                            st.info("Your request is pending approver review.")
                         else:
                             st.info("Only designated approvers can approve/reject.")
     except Exception as ex:
