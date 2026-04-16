@@ -52,14 +52,25 @@ except Exception:
     current_user = "unknown"
 
 _admin_users = [u.strip().lower() for u in os.environ.get("ADMIN_USERS", "").split(",") if u.strip()]
-if current_user.lower() not in _admin_users:
-    st.markdown(
-        '<style>[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"]'
-        ' { display: none !important; }</style>',
-        unsafe_allow_html=True,
-    )
+_approver_emails_lower = [e.lower() for e in APPROVER_EMAILS]
+is_approver = current_user.lower() in _approver_emails_lower
 
-is_approver = current_user.lower() in [e.lower() for e in APPROVER_EMAILS]
+# Hide sidebar links for unauthorized users
+_hide_css = []
+if current_user.lower() not in _admin_users:
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }')
+if not is_approver:
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Approval_Dashboard"] { display: none !important; }')
+if _hide_css:
+    st.markdown(f'<style>{"".join(_hide_css)}</style>', unsafe_allow_html=True)
+
+# Block page access for non-approvers
+if not is_approver:
+    st.error(
+        f"**Access Denied.** This page is restricted to designated approvers only.\n\n"
+        f"Your account: `{current_user}`"
+    )
+    st.stop()
 
 
 # ═════════════════════════════════════════════════════════════

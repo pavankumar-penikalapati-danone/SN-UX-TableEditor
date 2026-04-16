@@ -111,12 +111,13 @@ env:
   - name: EDITOR_GROUP_COLUMN_ACCESS
     value: '{"AAD-GAA-WW-ONESOURCE-T-RNI-ANL": ["*"], "AAD-GAA-WW-RNI-UX-SUP-CONSOMASTER-EXT": ["match_type","brand_L0","brand_L1","prod_type","flavour_pack","test_country","test_year","zone","CBU","competitor1","competitor2","prod_catL1","test_area","prod_status"]}'
 
-  # ── test_status approval page (page 5) ─────────────────
+  # ── test_status approval page (page 5 & 6) ─────────────
   # Comma-separated approver emails
   - name: TEST_STATUS_APPROVERS
     value: "pavankumar.penikalapati@external.danone.com,tiago.brito@danone.com,vedant.raghav@external.danone.com"
 
-  # SMTP for email notifications (optional – leave empty to skip)
+  # ── SMTP for email notifications (optional) ────────────
+  # Uncomment and fill in to enable email notifications
   # - name: SMTP_HOST
   #   value: "smtp.office365.com"
   # - name: SMTP_PORT

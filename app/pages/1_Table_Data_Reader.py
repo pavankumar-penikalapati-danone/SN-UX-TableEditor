@@ -126,8 +126,14 @@ try:
 except Exception:
     _current_user = ""
 
+_approver_emails = [e.strip().lower() for e in __import__("os").environ.get("TEST_STATUS_APPROVERS", "").split(",") if e.strip()]
+_hide_css = []
 if not (_current_user.lower() in ADMIN_USERS if _current_user else False):
-    st.markdown('<style>[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }</style>', unsafe_allow_html=True)
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }')
+if _current_user.lower() not in _approver_emails:
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Approval_Dashboard"] { display: none !important; }')
+if _hide_css:
+    st.markdown(f'<style>{"".join(_hide_css)}</style>', unsafe_allow_html=True)
 
 # Initialize fetch-state gate
 if "init_data_fetch" not in st.session_state:

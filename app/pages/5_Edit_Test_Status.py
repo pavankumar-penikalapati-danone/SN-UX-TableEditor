@@ -167,12 +167,14 @@ except Exception:
     _can_edit = False
 
 _admin_users = [u.strip().lower() for u in os.environ.get("ADMIN_USERS", "").split(",") if u.strip()]
+_approver_emails_lower = [e.lower() for e in APPROVER_EMAILS]
+_hide_css = []
 if _current_user.lower() not in _admin_users:
-    st.markdown(
-        '<style>[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"]'
-        ' { display: none !important; }</style>',
-        unsafe_allow_html=True,
-    )
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }')
+if _current_user.lower() not in _approver_emails_lower:
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Approval_Dashboard"] { display: none !important; }')
+if _hide_css:
+    st.markdown(f'<style>{"".join(_hide_css)}</style>', unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════
@@ -729,27 +731,37 @@ if "ts_data" in st.session_state:
             _ts_go_page(1)
 
 else:
-    # ── Auto-fetch on page load ──────────────────────────────
-    try:
-        with st.spinner(f"Loading {TABLE_FQN}..."):
-            fetch_sql = (
-                f"SELECT * FROM {TABLE_FQN} ORDER BY row_id "
-                f"-- cb: {uuid.uuid4()}"
-            )
-            _tk = get_user_token()
-            raw = run_query(fetch_sql, _tk)
-            _safe = {k: v for k, v in SCHEMA_DTYPE.items() if k in raw.columns}
-            ts_data = raw.astype(_safe)
+    # ── Load data on demand (not auto-fetch) ─────────────────
+    st.markdown(
+        "<h2 style='font-size:28px; font-weight:700; margin-bottom:5px;'>"
+        "[EDIT] test_status</h2>"
+        "<p style='margin:0; font-size:13px; color:#666;'>"
+        "<b>Cancelled</b> = direct commit &nbsp;|&nbsp; "
+        "<b>Other statuses</b> = sent for approval</p>",
+        unsafe_allow_html=True,
+    )
+    st.info("Click **Load Data** to fetch the table.")
+    if st.button("Load Data", type="primary", key="ts_load_btn"):
+        try:
+            with st.spinner(f"Loading {TABLE_FQN}..."):
+                fetch_sql = (
+                    f"SELECT * FROM {TABLE_FQN} ORDER BY row_id "
+                    f"-- cb: {uuid.uuid4()}"
+                )
+                _tk = get_user_token()
+                raw = run_query(fetch_sql, _tk)
+                _safe = {k: v for k, v in SCHEMA_DTYPE.items() if k in raw.columns}
+                ts_data = raw.astype(_safe)
 
-            st.session_state["ts_data"] = ts_data
-            st.session_state["ts_sfe_df"] = ts_data.copy()
-            st.session_state["ts_total_pages"] = max(
-                1, math.ceil(len(ts_data) / TS_PAGE_SIZE))
+                st.session_state["ts_data"] = ts_data
+                st.session_state["ts_sfe_df"] = ts_data.copy()
+                st.session_state["ts_total_pages"] = max(
+                    1, math.ceil(len(ts_data) / TS_PAGE_SIZE))
 
-        if ts_data.empty:
-            st.info("Table loaded but returned 0 rows.")
-        else:
-            st.session_state["ts_init_data_fetch"] = True
-            st.rerun()
-    except Exception as ex:
-        st.error(f"Failed to load table: {ex}")
+            if ts_data.empty:
+                st.info("Table loaded but returned 0 rows.")
+            else:
+                st.session_state["ts_init_data_fetch"] = True
+                st.rerun()
+        except Exception as ex:
+            st.error(f"Failed to load table: {ex}")

@@ -109,8 +109,14 @@ if ADMIN_USERS and current_user_lower not in ADMIN_USERS:
     st.stop()
 
 # ── Hide Admin page from sidebar for non-admin users ─────────
+_approver_emails = [e.strip().lower() for e in os.environ.get("TEST_STATUS_APPROVERS", "").split(",") if e.strip()]
+_hide_css = []
 if ADMIN_USERS and current_user_lower not in ADMIN_USERS:
-    st.markdown('<style>[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }</style>', unsafe_allow_html=True)
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }')
+if current_user_lower not in _approver_emails:
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Approval_Dashboard"] { display: none !important; }')
+if _hide_css:
+    st.markdown(f'<style>{"".join(_hide_css)}</style>', unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════
