@@ -371,6 +371,14 @@ if "ts_data" in st.session_state:
         lambda x: "\U0001f7e1" if pd.isna(x) else ""
     ))
 
+    # ── Reorder columns: put test_status near the front ──────
+    _priority_cols = ["_select", "row_id", "test_status", "match_type", "sp_test_id", "cl_test_id"]
+    if "ts_sfe_df" in st.session_state:
+        _df = st.session_state["ts_sfe_df"]
+        _front = [c for c in _priority_cols if c in _df.columns]
+        _rest = [c for c in _df.columns if c not in _front]
+        st.session_state["ts_sfe_df"] = _df[_front + _rest]
+
     col_cfg = build_column_config(st.session_state["ts_data"], dropdown_required=True)
     # Override test_status with dropdown
     col_cfg["test_status"] = st.column_config.SelectboxColumn(
