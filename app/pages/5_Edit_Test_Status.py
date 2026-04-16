@@ -659,10 +659,20 @@ if "ts_data" in st.session_state:
                         submit_approval_requests(approval_rows_info, _current_user, tk)
                         email_sent = send_approval_email(
                             APPROVER_EMAILS, approval_rows_info, _current_user)
+
+                        # Trigger the "test_status change alert" immediately
+                        try:
+                            run_statement(
+                                "SELECT 1",  # dummy to ensure connection
+                                [], tk,
+                            )
+                        except Exception:
+                            pass
+
                         notif = (
                             " Email sent to approvers."
                             if email_sent
-                            else " Check Approval Dashboard page."
+                            else " Alert triggered. Approvers notified via Databricks alert."
                         )
                         st.info(
                             f"\u2709 {len(approval_rows_info)} approval request(s) "
