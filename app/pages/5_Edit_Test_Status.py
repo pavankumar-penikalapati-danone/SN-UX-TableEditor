@@ -619,16 +619,20 @@ if "ts_data" in st.session_state:
                     for e in pre_errors:
                         st.warning(e)
                 else:
-                    # Remove approval rows from the diff before bulk_update
+                    # Remove ONLY test_status column from diff for approval rows
+                    # (other column changes on the same row still commit directly)
                     approval_rids = {r["row_id"] for r in approval_rows_info}
                     if approval_rids:
-                        # Filter diff to exclude approval rows
-                        direct_diff = diff.loc[
-                            ~diff.index.get_level_values(0).isin(approval_rids)
-                        ]
-                        direct_update_df = _existing.loc[
-                            diff.index.levels[0].difference(pd.Index(list(approval_rids)))
-                        ] if len(direct_diff) > 0 else None
+                        approval_ts_mask = (
+                            diff.index.get_level_values(0).isin(approval_rids)
+                            & (diff.index.get_level_values(1) == "test_status")
+                        )
+                        direct_diff = diff[~approval_ts_mask]
+                        if len(direct_diff) > 0:
+                            direct_rids = direct_diff.index.get_level_values(0).unique()
+                            direct_update_df = _existing.loc[direct_rids]
+                        else:
+                            direct_update_df = None
                     else:
                         direct_diff = diff
                         direct_update_df = update_rows_df
