@@ -335,9 +335,15 @@ if "ts_data" in st.session_state:
         except Exception:
             pass
 
-    # NOTE: Unlike page 2, we do NOT hide "Complete" rows here — show ALL rows
-
+    # ── Hide completed rows (test_status != 'complete') ─────
     sfe = st.session_state["ts_sfe_df"]
+    try:
+        sfe = sfe[
+            sfe["test_status"].astype(str).str.strip().str.lower() != "complete"
+        ].reset_index(drop=True)
+    except Exception:
+        pass  # keep sfe as-is if filter fails
+    st.session_state["ts_sfe_df"] = sfe
     st.session_state["ts_total_pages"] = max(1, math.ceil(len(sfe) / TS_PAGE_SIZE))
 
     # ── Slice page ───────────────────────────────────────────
@@ -359,6 +365,12 @@ if "ts_data" in st.session_state:
     ))
 
     col_cfg = build_column_config(st.session_state["ts_data"], dropdown_required=True)
+    # Override test_status with dropdown
+    col_cfg["test_status"] = st.column_config.SelectboxColumn(
+        to_bold("test_status"),
+        options=TEST_STATUS_OPTIONS,
+        required=True,
+    )
     col_cfg["_select"] = st.column_config.CheckboxColumn(
         "\u2795", width="small", pinned=True,
         help="Tick rows to copy below",
@@ -448,7 +460,12 @@ if "ts_data" in st.session_state:
             _merged = pd.concat([_before, _page_edited, _after], ignore_index=True)
 
             _full_orig = st.session_state["ts_data"].copy()
-            # NOTE: no "complete" filter — show all rows
+            # Apply same "complete" filter as display
+            if "test_status" in _full_orig.columns:
+                _full_orig = _full_orig[
+                    _full_orig["test_status"].astype(str).str.strip().str.lower()
+                    != "complete"
+                ].reset_index(drop=True)
 
             _new_rows = _merged[_merged["row_id"].isna()]
             _existing = (
