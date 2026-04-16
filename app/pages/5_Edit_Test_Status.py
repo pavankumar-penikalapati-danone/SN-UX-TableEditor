@@ -623,6 +623,7 @@ if "ts_data" in st.session_state:
                     # (other column changes on the same row still commit directly)
                     approval_rids = {r["row_id"] for r in approval_rows_info}
                     if approval_rids:
+                        # Exclude test_status column from diff for approval rows
                         approval_ts_mask = (
                             diff.index.get_level_values(0).isin(approval_rids)
                             & (diff.index.get_level_values(1) == "test_status")
@@ -630,7 +631,14 @@ if "ts_data" in st.session_state:
                         direct_diff = diff[~approval_ts_mask]
                         if len(direct_diff) > 0:
                             direct_rids = direct_diff.index.get_level_values(0).unique()
-                            direct_update_df = _existing.loc[direct_rids]
+                            direct_update_df = _existing.loc[direct_rids].copy()
+                            # CRITICAL: restore ORIGINAL test_status for approval rows
+                            # so bulk_update MERGE doesn't overwrite it
+                            for rid in approval_rids:
+                                if rid in direct_update_df.index and rid in _orig_indexed.index:
+                                    direct_update_df.at[rid, "test_status"] = (
+                                        _orig_indexed.at[rid, "test_status"]
+                                    )
                         else:
                             direct_update_df = None
                     else:
