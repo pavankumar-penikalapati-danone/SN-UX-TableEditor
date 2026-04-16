@@ -194,6 +194,13 @@ if "ts_data" in st.session_state:
     # ── Sidebar filters ──────────────────────────────────────
     with st.sidebar:
         if st.session_state.get("ts_init_data_fetch"):
+            if st.button("\U0001f504 Refresh Data", type="secondary",
+                         use_container_width=True, key="ts_refresh_btn"):
+                for k in list(st.session_state.keys()):
+                    if k.startswith("ts_"):
+                        del st.session_state[k]
+                st.rerun()
+            st.divider()
             st.header("Filters")
 
             def _ts_filter_toggle(col_key):
