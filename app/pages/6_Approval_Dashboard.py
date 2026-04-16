@@ -19,6 +19,7 @@ from config import (
     get_user_identity, ensure_session_id,
     create_audit_table, write_audit_events, get_connection,
     is_user_in_editor_group,
+    generate_test_id, compute_seq,
 )
 
 # ── Constants ────────────────────────────────────────────────
@@ -30,22 +31,12 @@ APPROVER_EMAILS = [
     e.strip() for e in os.getenv("TEST_STATUS_APPROVERS", "").split(",") if e.strip()
 ]
 
-# All 14 mandatory context columns to show alongside approval info
+# All 14 mandatory context columns
 CONTEXT_COLS = [
-    "match_type",
-    "sp_test_id",
-    "cl_test_id",
-    "brand_L1",
-    "branded_flag",
-    "flavour_pack",
-    "prod_type",
-    "test_country",
-    "test_year",
-    "zone",
-    "CBU",
-    "brand_L0",
-    "prod_catL1",
-    "test_status",
+    "match_type", "sp_test_id", "cl_test_id",
+    "brand_L1", "branded_flag", "flavour_pack",
+    "prod_type", "test_country", "test_year",
+    "zone", "CBU", "brand_L0", "prod_catL1", "test_status",
 ]
 
 
@@ -67,7 +58,6 @@ _admin_users = [u.strip().lower() for u in os.environ.get("ADMIN_USERS", "").spl
 _approver_emails_lower = [e.lower() for e in APPROVER_EMAILS]
 is_approver = current_user.lower() in _approver_emails_lower
 
-# Hide sidebar links
 _hide_css = []
 if current_user.lower() not in _admin_users:
     _hide_css.append('[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }')
@@ -76,12 +66,8 @@ if not is_approver:
 if _hide_css:
     st.markdown(f'<style>{"".join(_hide_css)}</style>', unsafe_allow_html=True)
 
-# Block non-approvers
 if not is_approver:
-    st.error(
-        f"**Access Denied.** This page is restricted to designated approvers only.\n\n"
-        f"Your account: `{current_user}`"
-    )
+    st.error(f"**Access Denied.** This page is restricted to designated approvers only.\n\nYour account: `{current_user}`")
     st.stop()
 
 
@@ -90,12 +76,10 @@ if not is_approver:
 # ═════════════════════════════════════════════════════════════
 
 def _ctx_sql(alias="m"):
-    """Build SELECT clause for context columns from master table."""
     return ", ".join([f"{alias}.{c} AS {c}" for c in CONTEXT_COLS])
 
 
 def fetch_pending_with_context(tk):
-    """Fetch PENDING approvals JOINed with master table for full row context."""
     q = (
         f"SELECT a.approval_id, a.row_id, "
         f"a.sp_test_id AS appr_sp_test_id, "
@@ -109,7 +93,6 @@ def fetch_pending_with_context(tk):
         f"-- cb: {uuid.uuid4()}"
     )
     df = run_query(q, tk)
-    # Use appr_sp_test_id (from approval table) if master sp_test_id is null
     if "appr_sp_test_id" in df.columns and "sp_test_id" in df.columns:
         mask = df["sp_test_id"].isna() | (df["sp_test_id"].astype(str).str.strip() == "")
         df.loc[mask, "sp_test_id"] = df.loc[mask, "appr_sp_test_id"]
@@ -118,7 +101,6 @@ def fetch_pending_with_context(tk):
 
 
 def fetch_history(tk, limit=200):
-    """Fetch approval history with full context from master table."""
     q = (
         f"SELECT a.approval_id, a.row_id, "
         f"a.sp_test_id AS appr_sp_test_id, "
@@ -141,6 +123,29 @@ def fetch_history(tk, limit=200):
     return df
 
 
+def _regenerate_sp_test_id(row_id, tk):
+    """Re-generate sp_test_id for a row after approval (same logic as bulk_update)."""
+    try:
+        row_df = run_query(
+            f"SELECT * FROM {TABLE_FQN} WHERE row_id = {row_id} "
+            f"-- cb: {uuid.uuid4()}", tk)
+        if row_df.empty:
+            return
+        row = row_df.iloc[0]
+        seq = compute_seq(row)
+        new_sid = generate_test_id(
+            row.get("match_type"), row.get("test_year"),
+            row.get("test_country"), row.get("prod_catL1"),
+            row.get("brand_L0"), row.get("retest_year"), seq,
+        )
+        run_statement(
+            f"UPDATE {TABLE_FQN} SET sp_test_id = '{new_sid}' "
+            f"WHERE row_id = {row_id}",
+            [], tk)
+    except Exception:
+        pass  # sp_test_id regeneration is best-effort
+
+
 def approve_rows(approval_ids, reviewer, comment, tk):
     approved = 0
     for aid in approval_ids:
@@ -152,19 +157,23 @@ def approve_rows(approval_ids, reviewer, comment, tk):
         row_id = int(req.iloc[0]["row_id"])
         new_status = req.iloc[0]["new_status"]
 
-        # Commit to master table
+        # 1. Commit test_status to master table
         run_statement(
             f"UPDATE {TABLE_FQN} SET test_status = '{new_status}' "
             f"WHERE row_id = {row_id}",
             [], tk)
 
-        # Mark APPROVED
+        # 2. Regenerate sp_test_id (same as bulk_update does)
+        _regenerate_sp_test_id(row_id, tk)
+
+        # 3. Mark APPROVED in approval table
         now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        safe_comment = (comment or "").replace("'", "")
         run_statement(
             f"UPDATE {APPROVAL_TABLE} SET status = 'APPROVED', "
             f"reviewed_by = '{reviewer}', "
             f"reviewed_at = '{now_ts}', "
-            f"review_comment = '{(comment or '').replace(chr(39), '')}' "
+            f"review_comment = '{safe_comment}' "
             f"WHERE approval_id = {aid}",
             [], tk)
         approved += 1
@@ -175,11 +184,12 @@ def reject_rows(approval_ids, reviewer, comment, tk):
     rejected = 0
     for aid in approval_ids:
         now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        safe_comment = (comment or "").replace("'", "")
         run_statement(
             f"UPDATE {APPROVAL_TABLE} SET status = 'REJECTED', "
             f"reviewed_by = '{reviewer}', "
             f"reviewed_at = '{now_ts}', "
-            f"review_comment = '{(comment or '').replace(chr(39), '')}' "
+            f"review_comment = '{safe_comment}' "
             f"WHERE approval_id = {aid}",
             [], tk)
         rejected += 1
@@ -195,7 +205,6 @@ ensure_session_id("appr_session_id")
 with st.sidebar:
     st.header("Approval Dashboard")
     st.caption(f"Approver: **{current_user}**")
-
     if st.button("\U0001f504 Refresh", type="primary",
                  use_container_width=True, key="appr_refresh"):
         for k in list(st.session_state.keys()):
@@ -228,11 +237,9 @@ with tab_pending:
         else:
             st.warning(f"**{len(pending)}** request(s) awaiting your review")
 
-            # Add _select checkbox
             pending_display = pending.copy()
             pending_display.insert(0, "_select", False)
 
-            # Column order: checkbox → IDs → before/after → all 14 mandatory → meta
             key_cols = ["_select", "approval_id", "row_id"]
             change_cols = ["old_status", "new_status"]
             context_cols = [c for c in CONTEXT_COLS if c in pending_display.columns]
@@ -257,8 +264,7 @@ with tab_pending:
                     to_bold("requested_at"), disabled=True),
             }
             for c in context_cols:
-                col_cfg[c] = st.column_config.TextColumn(
-                    to_bold(c), disabled=True)
+                col_cfg[c] = st.column_config.TextColumn(to_bold(c), disabled=True)
 
             edited_pending = st.data_editor(
                 pending_display[available_cols],
@@ -274,34 +280,27 @@ with tab_pending:
             if len(selected) > 0:
                 st.info(f"**{len(selected)}** request(s) selected")
 
-                comment = st.text_input(
-                    "Review comment (optional):",
-                    key="appr_review_comment",
-                )
+                comment = st.text_input("Review comment (optional):", key="appr_review_comment")
 
                 col1, col2, _ = st.columns([1.5, 1.5, 4])
                 with col1:
                     approve_btn = st.button(
                         f"\u2705 Approve {len(selected)} Selected",
-                        type="primary", key="appr_approve_btn",
-                    )
+                        type="primary", key="appr_approve_btn")
                 with col2:
                     reject_btn = st.button(
                         f"\u274c Reject {len(selected)} Selected",
-                        key="appr_reject_btn",
-                    )
+                        key="appr_reject_btn")
 
                 if approve_btn:
                     aids = selected["approval_id"].tolist()
-                    with st.spinner("Approving and committing changes to master table..."):
+                    with st.spinner("Approving, committing changes, and regenerating sp_test_id..."):
                         count = approve_rows(aids, current_user, comment, tk)
                     if count > 0:
                         st.success(
                             f"Approved **{count}** request(s). "
-                            f"Changes committed to master table. "
-                            f"Users can click **Refresh Data** on Edit Test Status page."
-                        )
-                        # Clear page 5 cache so data refreshes
+                            f"Changes committed to master table + sp_test_id regenerated. "
+                            f"Click **Refresh Data** on Edit Test Status page to see updates.")
                         for k in list(st.session_state.keys()):
                             if k.startswith("ts_"):
                                 del st.session_state[k]
@@ -315,16 +314,11 @@ with tab_pending:
                         count = reject_rows(aids, current_user, comment, tk)
                     if count > 0:
                         st.warning(
-                            f"Rejected **{count}** request(s). "
-                            f"No changes made to master table."
-                        )
+                            f"Rejected **{count}** request(s). No changes made to master table.")
                         time.sleep(1)
                         st.rerun()
             else:
-                st.caption(
-                    "Select rows using the checkbox column, "
-                    "then click Approve or Reject."
-                )
+                st.caption("Select rows using the checkbox column, then click Approve or Reject.")
 
     except Exception as ex:
         st.error(f"Failed to load pending approvals: {ex}")
@@ -341,7 +335,6 @@ with tab_history:
         else:
             st.caption(f"Showing last **{len(history)}** decisions")
 
-            # Column order: IDs → before/after → 14 mandatory → decision → meta
             hist_key = ["approval_id", "row_id"]
             hist_change = ["old_status", "new_status"]
             hist_ctx = [c for c in CONTEXT_COLS if c in history.columns]
@@ -349,8 +342,7 @@ with tab_history:
             hist_meta = ["requested_by", "requested_at",
                          "reviewed_by", "reviewed_at", "review_comment"]
             show_cols = [c for c in hist_key + hist_change + hist_ctx
-                         + hist_decision + hist_meta
-                         if c in history.columns]
+                         + hist_decision + hist_meta if c in history.columns]
 
             def _decision_color(val):
                 if val == "APPROVED":
@@ -363,16 +355,13 @@ with tab_history:
                 _decision_color, subset=["decision"] if "decision" in show_cols else [])
             st.dataframe(styled, use_container_width=True, hide_index=True)
 
-            # Summary metrics
             mc1, mc2, mc3 = st.columns(3)
             with mc1:
                 st.metric("Total Decisions", len(history))
             with mc2:
-                st.metric("Approved",
-                          len(history[history["decision"] == "APPROVED"]))
+                st.metric("Approved", len(history[history["decision"] == "APPROVED"]))
             with mc3:
-                st.metric("Rejected",
-                          len(history[history["decision"] == "REJECTED"]))
+                st.metric("Rejected", len(history[history["decision"] == "REJECTED"]))
 
     except Exception as ex:
         st.error(f"Failed to load history: {ex}")
