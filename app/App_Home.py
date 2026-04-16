@@ -31,11 +31,14 @@ _is_admin = _current_user.lower() in ADMIN_USERS if _current_user else False
 # nav links.  We inject CSS to hide links the user should not
 # see.  Each restricted page ALSO performs its own server-side
 # check, so this is defence-in-depth (UI only).
+_approver_emails = [e.strip().lower() for e in __import__("os").environ.get("TEST_STATUS_APPROVERS", "").split(",") if e.strip()]
+_hide_css = []
 if not _is_admin:
-    st.markdown(
-        '<style>[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }</style>',
-        unsafe_allow_html=True,
-    )
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }')
+if _current_user.lower() not in _approver_emails:
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Approval_Dashboard"] { display: none !important; }')
+if _hide_css:
+    st.markdown(f'<style>{"".join(_hide_css)}</style>', unsafe_allow_html=True)
 
 # ═════════════════════════════════════════════════════════════
 #  HOME PAGE CONTENT

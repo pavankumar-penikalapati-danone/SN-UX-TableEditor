@@ -64,8 +64,14 @@ try:
             break
 except Exception:
     pass
+_approver_emails = [e.strip().lower() for e in os.environ.get("TEST_STATUS_APPROVERS", "").split(",") if e.strip()]
+_hide_css = []
 if _admin_users_env and _nav_user not in _admin_users_env:
-    st.markdown('<style>[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }</style>', unsafe_allow_html=True)
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Admin_Table_Editor"] { display: none !important; }')
+if _nav_user not in _approver_emails:
+    _hide_css.append('[data-testid="stSidebarNav"] a[href*="Approval_Dashboard"] { display: none !important; }')
+if _hide_css:
+    st.markdown(f'<style>{"".join(_hide_css)}</style>', unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════
