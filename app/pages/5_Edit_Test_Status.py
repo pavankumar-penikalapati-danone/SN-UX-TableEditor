@@ -49,6 +49,31 @@ APPROVAL_TABLE = os.getenv(
     f"{CATALOG}.{SCHEMA}.ux_sn_test_status_approvals",
 )
 TEST_STATUS_OPTIONS = ["Cancelled", "Complete", "Future Test", "Test In Progress"]
+
+# ── Per-user column access for this page ─────────────────────
+# JSON env var: {"user@email": ["col1","col2",...]}
+# If user is listed → only those columns are editable
+# If user is NOT listed → falls back to group-based access (same as page 2)
+import json as _json
+_TS_USER_COL_ACCESS: dict[str, list[str]] = {}
+try:
+    _TS_USER_COL_ACCESS = _json.loads(
+        os.getenv("TEST_STATUS_USER_COLUMN_ACCESS", "{}")
+    )
+except Exception:
+    _TS_USER_COL_ACCESS = {}
+
+
+def _get_ts_disabled_columns(user_email: str, all_columns: list[str]) -> list[str]:
+    """Return disabled columns for page 5, using per-user config if available."""
+    user_key = user_email.lower()
+    if user_key in _TS_USER_COL_ACCESS:
+        allowed = set(_TS_USER_COL_ACCESS[user_key])
+        # Always keep system columns disabled
+        always_disabled = {"row_id", "sp_test_id", "cl_test_id", "ingestion_timestamp"}
+        return [c for c in all_columns if c not in allowed or c in always_disabled]
+    # Fall back to group-based access (same as page 2)
+    return get_disabled_columns_by_group(user_email, all_columns)
 DIRECT_COMMIT_STATUSES = {"Cancelled"}
 
 APPROVER_EMAILS = [
@@ -400,7 +425,7 @@ if "ts_data" in st.session_state:
         num_rows="dynamic" if _can_edit else "fixed",
         key=f"ts_grid_{st.session_state.get('ts_key_counter', 0)}",
         disabled=(
-            get_disabled_columns_by_group(_current_user, list(page_slice.columns)) + ["_clr"]
+            _get_ts_disabled_columns(_current_user, list(page_slice.columns)) + ["_clr"]
             if _can_edit
             else True
         ),

@@ -92,10 +92,10 @@ env:
 
   # ── Admin page settings ──────────────────────────────────
   - name: EDITOR_USERS
-    value: "pavankumar.penikalapati@external.danone.com,tiago.brito@danone.com,vedant.raghav@external.danone.com"
+    value: "pavankumar.penikalapati@external.danone.com,tiago.brito@danone.com,vedant.raghav@external.danone.com,senthilkumar.jambulingam@external.danone.com,laxmipriya.ramesh@external.danone.com,chetan.kadway@external.danone.com"
 
   - name: ADMIN_USERS
-    value: "pavankumar.penikalapati@external.danone.com,tiago.brito@danone.com,vedant.raghav@external.danone.com"
+    value: "pavankumar.penikalapati@external.danone.com,tiago.brito@danone.com,vedant.raghav@external.danone.com,senthilkumar.jambulingam@external.danone.com,laxmipriya.ramesh@external.danone.com,chetan.kadway@external.danone.com"
 
   - name: ADMIN_COLUMN_ACCESS
     value: '{"pavankumar.penikalapati@external.danone.com": {"Master Table": ["*"], "Mapping Codes": ["*"], "Dropdown Options": ["*"]}, "tiago.brito@danone.com": {"Master Table": ["*"], "Mapping Codes": ["*"], "Dropdown Options": ["*"]}, "vedant.raghav@external.danone.com": {"Master Table": ["*"], "Mapping Codes": ["*"], "Dropdown Options": ["*"]}}'
@@ -114,7 +114,10 @@ env:
   # ── test_status approval page (page 5 & 6) ─────────────
   # Comma-separated approver emails
   - name: TEST_STATUS_APPROVERS
-    value: "pavankumar.penikalapati@external.danone.com,tiago.brito@danone.com,vedant.raghav@external.danone.com"
+    value: "pavankumar.penikalapati@external.danone.com,tiago.brito@danone.com,vedant.raghav@external.danone.com,senthilkumar.jambulingam@external.danone.com,laxmipriya.ramesh@external.danone.com,chetan.kadway@external.danone.com"
+
+  - name: TEST_STATUS_USER_COLUMN_ACCESS
+    value: '{"vedant.raghav@external.danone.com": ["test_status", "match_type", "brand_L0", "brand_L1", "prod_type", "flavour_pack", "test_country", "test_year", "zone", "CBU", "prod_catL1", "test_area", "prod_status", "competitor1", "competitor2"], "senthilkumar.jambulingam@external.danone.com": ["test_status", "match_type", "brand_L0", "brand_L1", "prod_type", "flavour_pack", "test_country", "test_year", "zone", "CBU", "prod_catL1"], "laxmipriya.ramesh@external.danone.com": ["test_status", "match_type", "brand_L0", "brand_L1", "prod_type", "flavour_pack", "test_country", "test_year", "zone", "CBU", "prod_catL1"], "chetan.kadway@external.danone.com": ["test_status", "match_type", "brand_L0", "brand_L1", "prod_type", "flavour_pack", "test_country", "test_year", "zone", "CBU", "prod_catL1"]}'
 
   # ── SMTP for email notifications (optional) ────────────
   # Uncomment and fill in to enable email notifications
